@@ -1,0 +1,460 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  student
+  teacher
+  content_admin
+  admin
+}
+
+enum UserStatus {
+  active
+  suspended
+  deleted
+}
+
+enum PublishStatus {
+  draft
+  in_review
+  scheduled
+  published
+  archived
+}
+
+model User {
+  id                String                 @id @default(cuid())
+  username          String?                @unique
+  email             String                 @unique
+  name              String
+  passwordHash      String?
+  role              Role                   @default(student)
+  status            UserStatus             @default(active)
+  level             String                 @default("Студент")
+  xp                Int                    @default(0)
+  lastLoginAt       DateTime?
+  authSessions      AuthSession[]
+  authoredCourses   Course[]
+  enrollments       Enrollment[]
+  lessonProgress    LessonProgress[]
+  quizAttempts      QuizAttempt[]
+  experimentResults UserExperimentResult[]
+  achievements      UserAchievement[]
+  xpTransactions    UserXpTransaction[]
+  auditLogs         AuditLog[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  deletedAt         DateTime?
+
+  @@index([role, status, deletedAt])
+}
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Course {
+  id          String        @id @default(cuid())
+  slug        String        @unique
+  title       String
+  description String
+  status      PublishStatus @default(draft)
+  authorId    String?
+  author      User?         @relation(fields: [authorId], references: [id])
+  modules     Module[]
+  enrollments Enrollment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  @@index([status, deletedAt])
+}
+
+model Module {
+  id             String   @id @default(cuid())
+  courseId       String
+  course         Course   @relation(fields: [courseId], references: [id])
+  title          String
+  position       Int
+  prerequisiteId String?
+  lessons        Lesson[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  @@unique([courseId, position])
+}
+
+model Lesson {
+  id          String               @id @default(cuid())
+  moduleId    String
+  module      Module               @relation(fields: [moduleId], references: [id])
+  slug        String               @unique
+  title       String
+  objective   String
+  status      PublishStatus        @default(draft)
+  position    Int
+  xpReward    Int                  @default(50)
+  blocks      LessonContentBlock[]
+  progress    LessonProgress[]
+  quizzes     Quiz[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  deletedAt   DateTime?
+
+  @@index([moduleId, position, deletedAt])
+}
+
+model LessonContentBlock {
+  id        String   @id @default(cuid())
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id])
+  type      String
+  content   Json
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@unique([lessonId, position])
+}
+
+model Enrollment {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id])
+  enrolledAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+}
+
+model LessonProgress {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  lessonId    String
+  lesson      Lesson    @relation(fields: [lessonId], references: [id])
+  percent     Int       @default(0)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([userId, lessonId])
+}
+
+model Quiz {
+  id        String        @id @default(cuid())
+  lessonId  String?
+  lesson    Lesson?       @relation(fields: [lessonId], references: [id])
+  title     String
+  passScore Int           @default(70)
+  status    PublishStatus @default(draft)
+  questions Question[]
+  attempts  QuizAttempt[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+}
+
+model Question {
+  id            String           @id @default(cuid())
+  quizId        String
+  quiz          Quiz             @relation(fields: [quizId], references: [id])
+  type          String
+  prompt        String
+  correctAnswer String
+  explanation   String
+  position      Int
+  options       QuestionOption[]
+  answers       QuizAnswer[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  deletedAt     DateTime?
+
+  @@unique([quizId, position])
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+  label      String
+  isCorrect  Boolean  @default(false)
+}
+
+model QuizAttempt {
+  id          String       @id @default(cuid())
+  quizId      String
+  quiz        Quiz         @relation(fields: [quizId], references: [id])
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  score       Int
+  answers     QuizAnswer[]
+  completedAt DateTime     @default(now())
+
+  @@index([userId, completedAt])
+}
+
+model QuizAnswer {
+  id         String      @id @default(cuid())
+  attemptId  String
+  attempt    QuizAttempt @relation(fields: [attemptId], references: [id])
+  questionId String
+  question   Question    @relation(fields: [questionId], references: [id])
+  answer     String
+  isCorrect  Boolean
+}
+
+model ChemicalElement {
+  id           String   @id @default(cuid())
+  atomicNumber Int      @unique
+  symbol       String   @unique
+  nameKk       String
+  details      Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+}
+
+model ChemicalReaction {
+  id               String   @id @default(cuid())
+  equation         String
+  balancedEquation String
+  type             String
+  hint             String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+}
+
+model LaboratoryExperiment {
+  id          String                 @id @default(cuid())
+  title       String
+  description String
+  safety      String
+  status      PublishStatus          @default(published)
+  steps       ExperimentStep[]
+  results     UserExperimentResult[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  deletedAt   DateTime?
+}
+
+model ExperimentStep {
+  id           String               @id @default(cuid())
+  experimentId String
+  experiment   LaboratoryExperiment @relation(fields: [experimentId], references: [id])
+  instruction  String
+  position     Int
+
+  @@unique([experimentId, position])
+}
+
+model UserExperimentResult {
+  id           String               @id @default(cuid())
+  userId       String
+  user         User                 @relation(fields: [userId], references: [id])
+  experimentId String
+  experiment   LaboratoryExperiment @relation(fields: [experimentId], references: [id])
+  completedAt  DateTime             @default(now())
+
+  @@unique([userId, experimentId])
+}
+
+model Achievement {
+  id          String            @id @default(cuid())
+  code        String            @unique
+  title       String
+  description String
+  xpReward    Int               @default(0)
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  awardedAt     DateTime    @default(now())
+
+  @@unique([userId, achievementId])
+}
+
+model UserXpTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  amount      Int
+  reason      String
+  referenceId String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, reason, referenceId])
+}
+
+model DailyChallenge {
+  id            String   @id @default(cuid())
+  challengeDate DateTime @unique @db.Date
+  title         String
+  payload       Json
+  xpReward      Int      @default(35)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+}
+
+model GradeLevel {
+  id        String        @id @default(cuid())
+  code      String        @unique
+  title     String
+  position  Int           @default(0)
+  status    PublishStatus @default(published)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+}
+
+model SubjectSection {
+  id          String        @id @default(cuid())
+  slug        String        @unique
+  title       String
+  description String        @default("")
+  position    Int           @default(0)
+  status      PublishStatus @default(draft)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+}
+
+model Page {
+  id             String        @id @default(cuid())
+  slug           String        @unique
+  title          String
+  seoTitle       String?
+  seoDescription String?
+  status         PublishStatus @default(draft)
+  scheduledAt    DateTime?
+  publishedAt    DateTime?
+  createdBy      String?
+  updatedBy      String?
+  sections       PageSection[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  @@index([status, publishedAt])
+}
+
+model PageSection {
+  id         String        @id @default(cuid())
+  pageId     String
+  page       Page          @relation(fields: [pageId], references: [id])
+  sectionKey String
+  type       String
+  title      String?
+  body       String?
+  payload    Json?
+  position   Int           @default(0)
+  isVisible  Boolean       @default(true)
+  status     PublishStatus @default(draft)
+  createdBy  String?
+  updatedBy  String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  deletedAt  DateTime?
+
+  @@unique([pageId, sectionKey])
+  @@index([pageId, position])
+}
+
+model GlobalText {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  locale      String   @default("kk")
+  value       String
+  description String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+}
+
+model NavigationItem {
+  id           String   @id @default(cuid())
+  menu         String   @default("main")
+  label        String
+  href         String
+  icon         String?
+  position     Int      @default(0)
+  isVisible    Boolean  @default(true)
+  requiredRole String?
+  parentId     String?
+  updatedBy    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  @@index([menu, position])
+}
+
+model MediaAsset {
+  id         String   @id @default(cuid())
+  title      String
+  url        String
+  mimeType   String
+  altText    String
+  caption    String?
+  folder     String   @default("general")
+  sizeBytes  Int?
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  @@index([folder, createdAt])
+}
+
+model ContentVersion {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  version    Int
+  snapshot   Json
+  changeNote String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@unique([entityType, entityId, version])
+  @@index([entityType, entityId, createdAt])
+}
