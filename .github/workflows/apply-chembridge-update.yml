@@ -1623,6 +1623,7 @@ jobs:
       - name: Validate and build GitHub Pages
         run: |
           pnpm install --frozen-lockfile
+          pnpm exec prisma generate
           pnpm typecheck
           pnpm test
           pnpm test:migrations
