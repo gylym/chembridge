@@ -14,6 +14,8 @@ const routeViews: Record<string, View> = {
   "/quizzes": "quizzes",
   "/videos": "videos",
   "/syllabuses": "syllabuses",
+  "/presentations": "presentations",
+  "/assignments": "assignments",
   "/feedback": "feedback",
   "/profile": "profile",
   "/admin": "admin",
