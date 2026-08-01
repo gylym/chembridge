@@ -1595,6 +1595,7 @@ jobs:
           ARCHIVE
           base64 --decode "$RUNNER_TEMP/chembridge-update.b64" > "$RUNNER_TEMP/chembridge-update.tar.gz"
           tar -xzf "$RUNNER_TEMP/chembridge-update.tar.gz"
+          find . -name '._*' -delete
       - uses: pnpm/action-setup@v4
         with:
           version: 10
