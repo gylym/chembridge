@@ -220,6 +220,49 @@ export const syllabuses = sqliteTable("syllabuses", {
   ...timestamps,
 }, (table) => [index("syllabuses_level_status_idx").on(table.level, table.status, table.academicYear)]);
 
+export const presentations = sqliteTable("presentations", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  level: text("level").notNull(),
+  courseId: text("course_id").references(() => courses.id),
+  topic: text("topic").notNull().default(""),
+  author: text("author").notNull().default("ChemBridge"),
+  fileUrl: text("file_url").notNull(),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSizeBytes: integer("file_size_bytes"),
+  slideCount: integer("slide_count"),
+  position: integer("position").notNull().default(1),
+  status: text("status").notNull().default("draft"),
+  publishedAt: integer("published_at", { mode: "timestamp" }),
+  createdBy: text("created_by").references(() => users.id),
+  updatedBy: text("updated_by").references(() => users.id),
+  ...timestamps,
+}, (table) => [index("presentations_level_status_idx").on(table.level, table.status, table.position)]);
+
+export const assignments = sqliteTable("assignments", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  instructions: text("instructions").notNull().default(""),
+  level: text("level").notNull(),
+  courseId: text("course_id").references(() => courses.id),
+  topic: text("topic").notNull().default(""),
+  author: text("author").notNull().default("ChemBridge"),
+  fileUrl: text("file_url").notNull(),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSizeBytes: integer("file_size_bytes"),
+  estimatedMinutes: integer("estimated_minutes"),
+  position: integer("position").notNull().default(1),
+  status: text("status").notNull().default("draft"),
+  publishedAt: integer("published_at", { mode: "timestamp" }),
+  createdBy: text("created_by").references(() => users.id),
+  updatedBy: text("updated_by").references(() => users.id),
+  ...timestamps,
+}, (table) => [index("assignments_level_status_idx").on(table.level, table.status, table.position)]);
+
 export const feedbackMessages = sqliteTable("feedback_messages", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),

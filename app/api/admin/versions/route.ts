@@ -18,6 +18,8 @@ const tables = {
   laboratories: "laboratory_experiments",
   videos: "video_lessons",
   syllabuses: "syllabuses",
+  presentations: "presentations",
+  assignments: "assignments",
   achievements: "achievements",
   challenges: "daily_challenges",
   settings: "site_settings",
@@ -82,6 +84,7 @@ export async function POST(request: NextRequest) {
       lessonId: "lesson_id", quizId: "quiz_id", prerequisiteId: "prerequisite_id",
       youtubeUrl: "youtube_url", youtubeVideoId: "youtube_video_id", durationMinutes: "duration_minutes",
       academicYear: "academic_year", pdfUrl: "pdf_url", fileSizeBytes: "file_size_bytes",
+      fileUrl: "file_url", fileName: "file_name", slideCount: "slide_count", estimatedMinutes: "estimated_minutes",
       learningOutcome: "learning_outcome", expectedObservation: "expected_observation", visualEffect: "visual_effect",
     };
     const ignored = new Set(["id", "createdAt", "updatedAt", "publishedAt", "createdBy", "updatedBy"]);

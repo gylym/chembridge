@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSafePdfUrl, extractYouTubeVideoId } from "./media-validation";
+import { assertSafePdfUrl, assertSafeResourceUrl, extractYouTubeVideoId } from "./media-validation";
 
 describe("media validation", () => {
   it("normalizes supported YouTube URLs", () => {
@@ -11,5 +11,12 @@ describe("media validation", () => {
   it("rejects arbitrary embeds and non-PDF files", () => {
     expect(() => extractYouTubeVideoId("https://example.com/embed/dQw4w9WgXcQ")).toThrow();
     expect(() => assertSafePdfUrl("https://example.com/file.exe")).toThrow();
+  });
+
+  it("accepts bundled and uploaded learning resources", () => {
+    expect(assertSafeResourceUrl("/sample-files/atom-kurylysy-ulgisi.pptx")).toBe("/sample-files/atom-kurylysy-ulgisi.pptx");
+    expect(assertSafeResourceUrl("/api/media/presentations%2Fsample.pptx")).toBe("/api/media/presentations%2Fsample.pptx");
+    expect(assertSafeResourceUrl("https://example.com/task.pdf")).toBe("https://example.com/task.pdf");
+    expect(() => assertSafeResourceUrl("https://example.com/script.exe")).toThrow();
   });
 });

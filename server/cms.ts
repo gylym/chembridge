@@ -25,6 +25,8 @@ export function assertPublishable(entity: string, record: Record<string, unknown
     laboratories: ["title", "description", "objective", "safety", "expectedObservation", "equation", "conclusion"],
     videos: ["title", "slug", "description", "youtubeUrl", "youtubeVideoId", "level"],
     syllabuses: ["title", "description", "level", "academicYear", "pdfUrl"],
+    presentations: ["title", "description", "level", "topic", "fileUrl", "fileName"],
+    assignments: ["title", "description", "instructions", "level", "topic", "fileUrl", "fileName"],
     pages: ["title", "slug"],
     pageSections: ["sectionKey", "type"],
   };

@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Atom,
@@ -27,6 +27,8 @@ import {
   Menu,
   Moon,
   Play,
+  Presentation,
+  NotebookPen,
   Video,
   MessageSquare,
   Download,
@@ -47,9 +49,9 @@ import { z } from "zod";
 import { equationDifference, gradeQuiz, isEquationBalanced } from "../lib/chemistry";
 import { curriculumLessons, elements, experiments, gradeLevels, reactions, type ChemicalElement, type CurriculumLesson, type GradeLevel } from "../lib/data";
 import { messages } from "../messages/kk";
-import { apiRequest } from "../lib/api-client";
+import { apiRequest, appPath, clearApiToken, saveApiToken, uploadMediaFile } from "../lib/api-client";
 
-type View =
+export type View =
   | "home"
   | "dashboard"
   | "world"
@@ -60,6 +62,8 @@ type View =
   | "quizzes"
   | "videos"
   | "syllabuses"
+  | "presentations"
+  | "assignments"
   | "feedback"
   | "profile"
   | "teacher"
@@ -75,9 +79,11 @@ const navItems = [
   ["quizzes", messages.nav.quizzes, ClipboardCheck],
   ["videos", "Видеосабақтар", Video],
   ["syllabuses", "Силлабустар", FileText],
+  ["presentations", "Презентациялар", Presentation],
+  ["assignments", "Тапсырмалар", NotebookPen],
 ] as const;
 
-const APP_VIEWS: View[] = ["dashboard", "world", "lesson", "periodic", "reactions", "laboratory", "quizzes", "videos", "syllabuses", "feedback", "profile", "teacher", "admin"];
+const APP_VIEWS: View[] = ["dashboard", "world", "lesson", "periodic", "reactions", "laboratory", "quizzes", "videos", "syllabuses", "presentations", "assignments", "feedback", "profile", "teacher", "admin"];
 
 const categoryNames: Record<string, string> = {
   all: "Барлығы",
@@ -121,6 +127,8 @@ type PublicCmsContent = {
   laboratorySteps: Array<{ experimentId: string; instruction: string; position: number }>;
   videos: Array<{ id: string; title: string; slug: string; description: string; youtubeVideoId: string; author: string; level: string; topic: string; durationMinutes: number; difficulty: string; position: number }>;
   syllabuses: Array<{ id: string; title: string; description: string; level: string; academicYear: string; semester: string; language: string; author: string; pdfUrl: string; fileSizeBytes: number | null; version: string }>;
+  presentations: Array<{ id: string; title: string; description: string; level: string; topic: string; author: string; fileUrl: string; fileName: string; mimeType: string; fileSizeBytes: number | null; slideCount: number | null; position: number }>;
+  assignments: Array<{ id: string; title: string; description: string; instructions: string; level: string; topic: string; author: string; fileUrl: string; fileName: string; mimeType: string; fileSizeBytes: number | null; estimatedMinutes: number | null; position: number }>;
 };
 
 function HomeView({ onStart, onPeriodic, cms }: { onStart: () => void; onPeriodic: () => void; cms: PublicCmsContent | null }) {
@@ -269,6 +277,14 @@ function WorldView({ actor, openLesson, lessons, completedIds }: { actor: Sessio
   );
 }
 
+function LessonAttachments({ lesson, blockType }: { lesson: CurriculumLesson; blockType: string }) {
+  const items = lesson.attachments?.filter((item) => item.blockType === blockType) ?? [];
+  if (!items.length) return null;
+  return <div className="lesson-attachments">{items.map((item) => item.mimeType.startsWith("image/")
+    ? <figure key={item.id}><img src={item.url} alt={item.altText} /><figcaption>{item.title}</figcaption></figure>
+    : <a key={item.id} href={item.url} target="_blank" rel="noreferrer"><FileText /><span><strong>{item.title}</strong><small>PDF құжатын ашу</small></span><Download /></a>)}</div>;
+}
+
 function LessonView({ go, lesson, onCompleted }: { go: (view: View) => void; lesson: CurriculumLesson; onCompleted: (lessonId: string) => void }) {
   const [answers, setAnswers] = useState<Array<number | null>>(() => lesson.quiz.map(() => null));
   const [completed, setCompleted] = useState(false);
@@ -302,10 +318,14 @@ function LessonView({ go, lesson, onCompleted }: { go: (view: View) => void; les
           <div className="objective"><Target size={22} /><div><strong>Оқу мақсаты</strong><p>{lesson.objective}</p></div></div>
           <h2>Қарапайым түсіндірме</h2>
           {lesson.theory.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+          <LessonAttachments lesson={lesson} blockType="theory" />
           {lesson.formula && <div className="formula">{lesson.formula}</div>}
+          <LessonAttachments lesson={lesson} blockType="formula" />
           <h2>Мысал</h2>
           <p>{lesson.example}</p>
+          <LessonAttachments lesson={lesson} blockType="example" />
           <div className="remember"><Sparkles size={22} /><div><strong>Есте сақта</strong><p>{lesson.remember}</p></div></div>
+          <LessonAttachments lesson={lesson} blockType="remember" />
           <section className="lesson-question">
             <span>Сабақ соңындағы 3 сұрақтық тексеру</span>
             {lesson.quiz.map((question, questionIndex) => <div className="lesson-mini-question" key={question.question}>
@@ -511,6 +531,21 @@ function SyllabusView({ items, actor }: { items: PublicCmsContent["syllabuses"];
   return <div className="page-shell"><div className="page-title"><div><span>Оқу құжаттары</span><h1>Силлабустар</h1><p>Пән бағдарламасын деңгей және оқу жылы бойынша тауып, қауіпсіз PDF ретінде аш.</p></div><span className="role-chip"><FileText /> {visible.length} құжат</span></div><div className="filter-bar"><label className="search-field"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Силлабус іздеу" /></label><label><span className="sr-only">Деңгей</span><select value={level} onChange={(e) => setLevel(e.target.value)}><option>Барлығы</option>{gradeLevels.map((item) => <option key={item}>{item}</option>)}</select></label></div><div className="syllabus-list">{visible.map((item) => <article className="panel syllabus-card" key={item.id}><span className="syllabus-icon"><FileText /></span><div><span>{item.level} · {item.academicYear} · {item.semester}</span><h2>{item.title}</h2><p>{item.description}</p><small>{item.author} · {item.language} · v{item.version}</small></div><div><a className="button secondary" href={item.pdfUrl} target="_blank" rel="noreferrer">Алдын ала көру</a><a className="button primary" href={item.pdfUrl} download>Жүктеу <Download /></a></div></article>)}</div>{!visible.length && <div className="empty-state"><FileText /><h2>Силлабус табылмады</h2><p>Әзірге осы сүзгіге сай жарияланған құжат жоқ.</p></div>}</div>;
 }
 
+type LearningResource = {
+  id: string; title: string; description: string; level: string; topic: string; author: string;
+  fileUrl: string; fileName: string; fileSizeBytes: number | null; position: number;
+  instructions?: string; slideCount?: number | null; estimatedMinutes?: number | null;
+};
+
+function LearningResourcesView({ kind, items, actor }: { kind: "presentations" | "assignments"; items: LearningResource[]; actor: SessionUser | null }) {
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState(actor?.level ?? "Барлығы");
+  const isPresentation = kind === "presentations";
+  const Icon = isPresentation ? Presentation : NotebookPen;
+  const visible = items.filter((item) => (level === "Барлығы" || item.level === level) && `${item.title} ${item.topic} ${item.author}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="page-shell"><div className="page-title"><div><span>{isPresentation ? "Сабаққа дайын слайдтар" : "Жүктеп алатын оқу жұмыстары"}</span><h1>{isPresentation ? "Презентациялар" : "Тапсырмалар"}</h1><p>{isPresentation ? "PPT және PPTX презентацияларын сынып пен тақырып бойынша тауып, жүктеп алыңыз." : "PDF және Word форматындағы тапсырмаларды жүктеп, сабақта немесе үйде орындаңыз."}</p></div><span className="role-chip"><Icon /> {visible.length} материал</span></div><div className="filter-bar"><label className="search-field"><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={isPresentation ? "Презентация іздеу" : "Тапсырма іздеу"} /></label><label><span className="sr-only">Деңгей</span><select value={level} onChange={(e) => setLevel(e.target.value)}><option>Барлығы</option>{gradeLevels.map((item) => <option key={item}>{item}</option>)}</select></label></div>{visible.length ? <div className="resource-grid">{visible.map((item) => <article className="panel resource-card" key={item.id}><span className={`resource-icon ${isPresentation ? "presentation" : "assignment"}`}><Icon /></span><div className="resource-copy"><span>{item.level} · {item.topic}</span><h2>{item.title}</h2><p>{item.description}</p>{item.instructions && <small className="resource-instructions">{item.instructions}</small>}<small>{item.author}{item.slideCount ? ` · ${item.slideCount} слайд` : ""}{item.estimatedMinutes ? ` · ${item.estimatedMinutes} минут` : ""}</small></div><div className="resource-actions"><span>{item.fileName.split(".").pop()?.toUpperCase()}</span><a className="button primary" href={item.fileUrl} download>Жүктеу <Download /></a></div></article>)}</div> : <div className="empty-state"><Icon /><h2>Материал табылмады</h2><p>Іздеу сөзін немесе деңгейді өзгертіп көріңіз.</p></div>}</div>;
+}
+
 function FeedbackView() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -571,7 +606,7 @@ type SessionUser = {
 };
 
 type AdminUser = SessionUser & { email: string; createdAt: number; lastLoginAt: number | null };
-type AdminSection = "users" | "pages" | "pageSections" | "texts" | "navigation" | "grades" | "subjects" | "courses" | "modules" | "lessons" | "blocks" | "quizzes" | "questions" | "elements" | "reactions" | "laboratories" | "videos" | "syllabuses" | "feedback" | "achievements" | "challenges" | "media" | "settings" | "audit";
+type AdminSection = "users" | "pages" | "pageSections" | "texts" | "navigation" | "grades" | "subjects" | "courses" | "modules" | "lessons" | "blocks" | "quizzes" | "questions" | "elements" | "reactions" | "laboratories" | "videos" | "syllabuses" | "presentations" | "assignments" | "feedback" | "achievements" | "challenges" | "media" | "settings" | "audit";
 type AdminOption = { id: string; label: string };
 type AdminOptions = { courses: AdminOption[]; modules: AdminOption[]; lessons: AdminOption[]; quizzes: AdminOption[] };
 type CreateField = {
@@ -595,7 +630,6 @@ const adminSections: Array<[AdminSection, string]> = [
   ["courses", "Курстар"],
   ["modules", "Модульдер"],
   ["lessons", "Сабақтар"],
-  ["blocks", "Сабақ блоктары"],
   ["quizzes", "Тесттер"],
   ["questions", "Сұрақтар"],
   ["elements", "Периодтық кесте"],
@@ -603,6 +637,8 @@ const adminSections: Array<[AdminSection, string]> = [
   ["laboratories", "Зертхана"],
   ["videos", "Видеосабақтар"],
   ["syllabuses", "Силлабустар"],
+  ["presentations", "Презентациялар"],
+  ["assignments", "Тапсырмалар"],
   ["feedback", "Кері байланыс"],
   ["achievements", "Жетістіктер"],
   ["challenges", "Күнделікті тапсырмалар"],
@@ -624,6 +660,18 @@ function relationOptions(items: AdminOption[], emptyLabel?: string) {
     ...(emptyLabel ? [{ value: "", label: emptyLabel }] : []),
     ...items.map((item) => ({ value: item.id, label: item.label })),
   ];
+}
+
+function resourceMimeType(file: File) {
+  if (file.type) return file.type;
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  return ({
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    pdf: "application/pdf",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  } as Record<string, string>)[extension ?? ""] ?? "application/octet-stream";
 }
 
 function createFields(section: AdminSection, options: AdminOptions): CreateField[] {
@@ -696,8 +744,8 @@ function createFields(section: AdminSection, options: AdminOptions): CreateField
     ];
     case "lessons": return [
       { ...base, name: "moduleId", label: "Модуль", type: "select", options: relationOptions(options.modules) },
+      { ...base, name: "gradeLevel", label: "Сынып", type: "select", options: gradeLevels.map((item) => ({ value: item, label: item })), defaultValue: "7-сынып" },
       { ...base, name: "title", label: "Сабақ атауы" },
-      { ...base, name: "slug", label: "URL атауы", placeholder: "atom-qurylysy" },
       { ...base, name: "objective", label: "Оқу мақсаты", type: "textarea" },
       { ...base, name: "theory", label: "Сабақтың негізгі мазмұны", type: "textarea", placeholder: "Теорияны қысқа абзацтармен жазыңыз" },
       { name: "formula", label: "Формула немесе химиялық теңдеу", type: "textarea" },
@@ -768,12 +816,12 @@ function createFields(section: AdminSection, options: AdminOptions): CreateField
       { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "draft" },
     ];
     case "videos": return [
-      { ...base, name: "title", label: "Видео атауы" }, { ...base, name: "slug", label: "URL атауы", placeholder: "atom-qurylysy-video" },
+      { ...base, name: "title", label: "Видео атауы" },
       { ...base, name: "description", label: "Қысқа сипаттама", type: "textarea" }, { ...base, name: "youtubeUrl", label: "YouTube сілтемесі", placeholder: "https://www.youtube.com/watch?v=..." },
       { ...base, name: "author", label: "Автор немесе мұғалім", defaultValue: "ChemBridge" }, { ...base, name: "level", label: "Деңгей", type: "select", options: gradeLevels.map((item) => ({ value: item, label: item })) },
       { name: "courseId", label: "Курс", type: "select", options: relationOptions(options.courses, "Курссыз") }, { ...base, name: "topic", label: "Тақырып" },
       { ...base, name: "durationMinutes", label: "Ұзақтығы (минут)", type: "number", defaultValue: 10 }, { ...base, name: "difficulty", label: "Қиындығы", defaultValue: "Бастапқы" },
-      { ...base, name: "position", label: "Реті", type: "number", defaultValue: 1 }, { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "draft" },
+      { ...base, name: "position", label: "Реті", type: "number", defaultValue: 1 }, { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "published" },
     ];
     case "syllabuses": return [
       { ...base, name: "title", label: "Силлабус атауы" }, { ...base, name: "description", label: "Сипаттамасы", type: "textarea" },
@@ -781,7 +829,22 @@ function createFields(section: AdminSection, options: AdminOptions): CreateField
       { ...base, name: "academicYear", label: "Оқу жылы", defaultValue: "2026–2027" }, { ...base, name: "semester", label: "Семестр", defaultValue: "1-семестр" },
       { ...base, name: "language", label: "Тілі", defaultValue: "Қазақша" }, { ...base, name: "author", label: "Автор немесе мекеме" },
       { name: "file", label: "PDF файл (немесе төменде сілтеме)", type: "file" }, { name: "pdfUrl", label: "Сыртқы PDF сілтемесі", placeholder: "https://example.kz/syllabus.pdf" }, { ...base, name: "version", label: "Нұсқа", defaultValue: "1.0" },
-      { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "draft" },
+      { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "published" },
+    ];
+    case "presentations": return [
+      { ...base, name: "title", label: "Презентация атауы" }, { ...base, name: "description", label: "Сипаттамасы", type: "textarea" },
+      { ...base, name: "level", label: "Сынып", type: "select", options: gradeLevels.map((item) => ({ value: item, label: item })) }, { name: "courseId", label: "Курс", type: "select", options: relationOptions(options.courses, "Курссыз") },
+      { ...base, name: "topic", label: "Тақырып" }, { ...base, name: "author", label: "Автор", defaultValue: "ChemBridge" },
+      { ...base, name: "file", label: "PPT немесе PPTX файл", type: "file" }, { name: "slideCount", label: "Слайд саны", type: "number" },
+      { ...base, name: "position", label: "Реті", type: "number", defaultValue: 1 }, { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "published" },
+    ];
+    case "assignments": return [
+      { ...base, name: "title", label: "Тапсырма атауы" }, { ...base, name: "description", label: "Сипаттамасы", type: "textarea" },
+      { ...base, name: "instructions", label: "Орындау нұсқаулығы", type: "textarea" }, { ...base, name: "level", label: "Сынып", type: "select", options: gradeLevels.map((item) => ({ value: item, label: item })) },
+      { name: "courseId", label: "Курс", type: "select", options: relationOptions(options.courses, "Курссыз") }, { ...base, name: "topic", label: "Тақырып" },
+      { ...base, name: "author", label: "Автор", defaultValue: "ChemBridge" }, { ...base, name: "file", label: "PDF немесе Word файл", type: "file" },
+      { name: "estimatedMinutes", label: "Орындау уақыты (минут)", type: "number", defaultValue: 20 }, { ...base, name: "position", label: "Реті", type: "number", defaultValue: 1 },
+      { ...base, name: "status", label: "Күйі", type: "select", options: statusOptions, defaultValue: "published" },
     ];
     case "achievements": return [
       { ...base, name: "code", label: "Код", placeholder: "atom_master" },
@@ -803,7 +866,217 @@ function createFields(section: AdminSection, options: AdminOptions): CreateField
   }
 }
 
-function AdminView({ actor }: { actor: SessionUser }) {
+type LessonEditorAttachment = { id: string; blockId: string; title: string; url: string; mimeType: string; altText: string };
+type LessonEditorBlock = { type: "theory" | "formula" | "example" | "remember"; content: string; position: number; attachments: LessonEditorAttachment[] };
+type LessonEditorQuestion = { id?: string; prompt: string; options: string[]; correctAnswerIndex: number; explanation: string; position: number };
+type LessonEditorData = {
+  lesson: { id: string; slug: string; title: string; objective: string; gradeLevel: string; status: string; position: number; xpReward: number };
+  blocks: Array<{ id: string; type: string; content: string; position: number }>;
+  attachments: LessonEditorAttachment[];
+  quiz: { id: string; title: string; passScore: number; status: string } | null;
+  questions: Array<{ id: string; prompt: string; correctAnswer: string; explanation: string; position: number; options: string | null }>;
+};
+
+const lessonBlockLabels: Record<LessonEditorBlock["type"], string> = {
+  theory: "Қарапайым түсіндірме",
+  formula: "Формула немесе теңдеу",
+  example: "Мысал",
+  remember: "Есте сақта",
+};
+
+function LessonAdminEditor({ lessonId, onClose, onSaved }: { lessonId: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [lesson, setLesson] = useState<LessonEditorData["lesson"] | null>(null);
+  const [blocks, setBlocks] = useState<LessonEditorBlock[]>([]);
+  const [quiz, setQuiz] = useState({ title: "Сабақ соңындағы тексеру", passScore: 67, status: "published" });
+  const [questions, setQuestions] = useState<LessonEditorQuestion[]>([]);
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<LessonEditorData>(`/api/admin/lesson-editor/${encodeURIComponent(lessonId)}`).then((data) => {
+      if (!active) return;
+      setLesson(data.lesson);
+      const orderedTypes: LessonEditorBlock["type"][] = ["theory", "formula", "example", "remember"];
+      setBlocks(orderedTypes.map((type, index) => {
+        const matching = data.blocks.filter((block) => block.type === type);
+        const blockIds = new Set(matching.map((block) => block.id));
+        return {
+          type,
+          content: matching.map((block) => block.content).filter(Boolean).join("\n\n"),
+          position: index + 1,
+          attachments: data.attachments.filter((attachment) => blockIds.has(attachment.blockId)),
+        };
+      }));
+      setQuiz(data.quiz ? { title: data.quiz.title, passScore: data.quiz.passScore, status: data.quiz.status } : { title: "Сабақ соңындағы тексеру", passScore: 67, status: "published" });
+      const staticLesson = curriculumLessons.find((item) => item.id === lessonId);
+      setQuestions([0, 1, 2].map((index) => {
+        const stored = data.questions.find((item) => item.position === index + 1);
+        const fallback = staticLesson?.quiz[index];
+        const options = questionOptions(stored?.options, fallback?.options ?? [stored?.correctAnswer ?? "Дұрыс жауап", "2-нұсқа", "3-нұсқа", "4-нұсқа"]);
+        return {
+          id: stored?.id,
+          prompt: stored?.prompt ?? fallback?.question ?? "",
+          options,
+          correctAnswerIndex: Math.max(0, options.findIndex((option) => option === (stored?.correctAnswer ?? fallback?.options[fallback.answer]))),
+          explanation: stored?.explanation ?? fallback?.explanation ?? "",
+          position: index + 1,
+        };
+      }));
+    }).catch((error) => setNotice(error instanceof Error ? error.message : "Сабақ жүктелмеді"));
+    return () => { active = false; };
+  }, [lessonId]);
+
+  async function uploadFile(type: LessonEditorBlock["type"], file: File) {
+    setUploading(type);
+    setNotice("");
+    try {
+      const uploaded = await uploadMediaFile(file, {
+        title: file.name,
+        altText: `${lessonBlockLabels[type]}: ${file.name}`,
+        folder: `lessons-${type}`,
+      });
+      setBlocks((current) => current.map((block) => block.type === type ? {
+        ...block,
+        attachments: [...block.attachments, { id: uploaded.id, blockId: "", title: file.name, url: uploaded.url, mimeType: file.type, altText: `${lessonBlockLabels[type]}: ${file.name}` }],
+      } : block));
+      setNotice("Файл жүктелді. Енді сабақты сақтаңыз.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Файл жүктелмеді");
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!lesson) return;
+    setBusy(true);
+    setNotice("");
+    try {
+      await apiRequest(`/api/admin/lesson-editor/${encodeURIComponent(lessonId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          lesson,
+          blocks: blocks.map((block) => ({ type: block.type, content: block.content, position: block.position, attachmentIds: block.attachments.map((item) => item.id) })),
+          quiz,
+          questions,
+        }),
+      });
+      setNotice("Сабақтың барлық бөлімдері сақталды");
+      await onSaved();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Сабақ сақталмады");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!lesson) return <div className="content-editor"><div className="panel-head"><h2>Сабақ жүктелуде…</h2><button type="button" className="icon-button" onClick={onClose}><X /></button></div>{notice && <p className="save-message">{notice}</p>}</div>;
+  return <form className="content-editor lesson-admin-editor" onSubmit={save}>
+    <div className="panel-head"><div><span>Толық сабақ редакторы</span><h2>{lesson.title}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Редакторды жабу"><X /></button></div>
+    <div className="lesson-editor-meta">
+      <label>Сабақ атауы<input value={lesson.title} onChange={(e) => setLesson({ ...lesson, title: e.target.value })} required /></label>
+      <label>Сынып<select value={lesson.gradeLevel || "10-сынып"} onChange={(e) => setLesson({ ...lesson, gradeLevel: e.target.value })}>{gradeLevels.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label>Күйі<select value={lesson.status} onChange={(e) => setLesson({ ...lesson, status: e.target.value })}>{statusOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+      <label>Реті<input type="number" min="1" value={lesson.position} onChange={(e) => setLesson({ ...lesson, position: Number(e.target.value) })} required /></label>
+      <label>XP марапаты<input type="number" min="0" value={lesson.xpReward} onChange={(e) => setLesson({ ...lesson, xpReward: Number(e.target.value) })} required /></label>
+    </div>
+    <label>Оқу мақсаты<textarea value={lesson.objective} onChange={(e) => setLesson({ ...lesson, objective: e.target.value })} required /></label>
+    {blocks.map((block) => <section className="lesson-editor-block" key={block.type}>
+      <div className="lesson-editor-block-head"><div><strong>{lessonBlockLabels[block.type]}</strong><small>Мәтінді өзгертіп, сурет немесе PDF тіркей аласыз</small></div><label className="button secondary file-button">{uploading === block.type ? "Жүктелуде…" : "Файл қосу"}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml,application/pdf" disabled={uploading !== null} onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadFile(block.type, file); e.currentTarget.value = ""; }} /></label></div>
+      <textarea aria-label={lessonBlockLabels[block.type]} value={block.content} onChange={(e) => setBlocks((current) => current.map((item) => item.type === block.type ? { ...item, content: e.target.value } : item))} required={block.type !== "formula"} />
+      {!!block.attachments.length && <div className="lesson-editor-files">{block.attachments.map((file) => <div key={file.id}>{file.mimeType.startsWith("image/") ? <img src={file.url} alt={file.altText} /> : <FileText />}<span><strong>{file.title}</strong><small>{file.mimeType === "application/pdf" ? "PDF" : "Сурет"}</small></span><button type="button" onClick={() => setBlocks((current) => current.map((item) => item.type === block.type ? { ...item, attachments: item.attachments.filter((attachment) => attachment.id !== file.id) } : item))} aria-label={`${file.title} файлын алып тастау`}><X /></button></div>)}</div>}
+    </section>)}
+    <section className="lesson-editor-quiz">
+      <div className="lesson-editor-block-head"><div><strong>Сабақ соңындағы 3 сұрақтық тексеру</strong><small>Әр сұрақта 4 жауап нұсқасы және бір дұрыс жауап болуы керек</small></div><label>Жариялау күйі<select value={quiz.status} onChange={(e) => setQuiz({ ...quiz, status: e.target.value })}>{statusOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label></div>
+      {questions.map((question, questionIndex) => <div className="lesson-editor-question" key={question.position}>
+        <strong>{questionIndex + 1}-сұрақ</strong>
+        <label>Сұрақ мәтіні<textarea value={question.prompt} onChange={(e) => setQuestions((current) => current.map((item, index) => index === questionIndex ? { ...item, prompt: e.target.value } : item))} required /></label>
+        <div className="lesson-editor-options">{question.options.map((option, optionIndex) => <label key={optionIndex}><input type="radio" name={`correct-${questionIndex}`} checked={question.correctAnswerIndex === optionIndex} onChange={() => setQuestions((current) => current.map((item, index) => index === questionIndex ? { ...item, correctAnswerIndex: optionIndex } : item))} /><span>{optionIndex + 1}-нұсқа</span><input value={option} onChange={(e) => setQuestions((current) => current.map((item, index) => index === questionIndex ? { ...item, options: item.options.map((value, i) => i === optionIndex ? e.target.value : value) } : item))} required /></label>)}</div>
+        <label>Жауап түсіндірмесі<textarea value={question.explanation} onChange={(e) => setQuestions((current) => current.map((item, index) => index === questionIndex ? { ...item, explanation: e.target.value } : item))} required /></label>
+      </div>)}
+    </section>
+    {notice && <p className="save-message" role="status">{notice}</p>}
+    <button className="button primary wide" type="submit" disabled={busy || uploading !== null}><Check /> {busy ? "Сақталуда…" : "Сабақтың барлық өзгерісін сақтау"}</button>
+  </form>;
+}
+
+type ElementDetailsEditor = {
+  international: string;
+  mass: string;
+  group: number | null;
+  period: number;
+  category: string;
+  state: string;
+  config: string;
+  history: string;
+  uses: string;
+  safety: string;
+};
+
+const elementCategories = [
+  ["alkali", "Сілтілік металдар"], ["alkaline", "Сілтілік-жер металдары"],
+  ["transition", "Ауыспалы металдар"], ["post-transition", "Басқа металдар"],
+  ["metalloid", "Металлоидтар"], ["nonmetal", "Бейметалдар"],
+  ["halogen", "Галогендер"], ["noble", "Инертті газдар"],
+  ["lanthanide", "Лантаноидтар"], ["actinide", "Актиноидтар"],
+] as const;
+
+function ElementAdminEditor({ item, onClose, onSaved }: { item: Record<string, unknown>; onClose: () => void; onSaved: () => Promise<void> }) {
+  const parsedDetails = (() => {
+    try { return typeof item.details === "string" ? JSON.parse(item.details) as Partial<ElementDetailsEditor> : item.details as Partial<ElementDetailsEditor>; }
+    catch { return {}; }
+  })();
+  const [atomicNumber, setAtomicNumber] = useState(Number(item.atomicNumber ?? 1));
+  const [symbol, setSymbol] = useState(String(item.symbol ?? ""));
+  const [nameKk, setNameKk] = useState(String(item.nameKk ?? ""));
+  const [details, setDetails] = useState<ElementDetailsEditor>({
+    international: String(parsedDetails?.international ?? symbol),
+    mass: String(parsedDetails?.mass ?? "—"),
+    group: parsedDetails?.group === null || parsedDetails?.group === undefined ? null : Number(parsedDetails.group),
+    period: Number(parsedDetails?.period ?? 1),
+    category: String(parsedDetails?.category ?? "nonmetal"),
+    state: String(parsedDetails?.state ?? "қатты"),
+    config: String(parsedDetails?.config ?? ""),
+    history: String(parsedDetails?.history ?? ""),
+    uses: String(parsedDetails?.uses ?? ""),
+    safety: String(parsedDetails?.safety ?? ""),
+  });
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault(); setBusy(true); setNotice("");
+    try {
+      await apiRequest("/api/admin/content/elements", { method: "PATCH", body: JSON.stringify({ id: item.id, values: { atomicNumber, symbol, nameKk, details: JSON.stringify(details) } }) });
+      await onSaved();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Элемент сақталмады"); }
+    finally { setBusy(false); }
+  }
+  return <form className="content-editor element-admin-editor" onSubmit={save}>
+    <div className="panel-head"><div><span>Периодтық кесте редакторы</span><h2>{nameKk || symbol}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div>
+    <div className="element-editor-grid">
+      <label>Атомдық нөмір<input type="number" min="1" max="118" value={atomicNumber} onChange={(e) => setAtomicNumber(Number(e.target.value))} required /></label>
+      <label>Химиялық таңба<input value={symbol} onChange={(e) => setSymbol(e.target.value)} maxLength={3} required /></label>
+      <label>Қазақша атауы<input value={nameKk} onChange={(e) => setNameKk(e.target.value)} required /></label>
+      <label>Халықаралық атауы<input value={details.international} onChange={(e) => setDetails({ ...details, international: e.target.value })} required /></label>
+      <label>Атомдық массасы<input value={details.mass} onChange={(e) => setDetails({ ...details, mass: e.target.value })} required /></label>
+      <label>Период<input type="number" min="1" max="7" value={details.period} onChange={(e) => setDetails({ ...details, period: Number(e.target.value) })} required /></label>
+      <label>Топ<input type="number" min="1" max="18" value={details.group ?? ""} onChange={(e) => setDetails({ ...details, group: e.target.value ? Number(e.target.value) : null })} placeholder="Лантаноид/актиноид үшін бос" /></label>
+      <label>Санаты<select value={details.category} onChange={(e) => setDetails({ ...details, category: e.target.value })}>{elementCategories.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+      <label>Агрегаттық күйі<select value={details.state} onChange={(e) => setDetails({ ...details, state: e.target.value })}><option>қатты</option><option>сұйық</option><option>газ</option><option>жасанды</option></select></label>
+    </div>
+    <label>Электрондық конфигурация<textarea value={details.config} onChange={(e) => setDetails({ ...details, config: e.target.value })} required /></label>
+    <label>Ашылу тарихы<textarea value={details.history} onChange={(e) => setDetails({ ...details, history: e.target.value })} required /></label>
+    <label>Қолданылуы<textarea value={details.uses} onChange={(e) => setDetails({ ...details, uses: e.target.value })} required /></label>
+    <label>Қауіпсіздік ақпараты<textarea value={details.safety} onChange={(e) => setDetails({ ...details, safety: e.target.value })} required /></label>
+    {notice && <p className="save-message" role="status">{notice}</p>}
+    <button className="button primary wide" type="submit" disabled={busy}><Check /> {busy ? "Сақталуда…" : "Элементті сақтау"}</button>
+  </form>;
+}
+
+function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentChanged: () => Promise<void> }) {
   const [section, setSection] = useState<AdminSection>(actor.role === "admin" ? "users" : "pages");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [content, setContent] = useState<Array<Record<string, unknown>>>([]);
@@ -867,15 +1140,31 @@ function AdminView({ actor }: { actor: SessionUser }) {
   async function saveContent(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected) return;
-    const values = Object.fromEntries(new FormData(e.currentTarget));
+    const formData = new FormData(e.currentTarget);
+    const values = Object.fromEntries(formData);
     try {
+      if (["presentations", "assignments"].includes(section)) {
+        const file = formData.get("file");
+        if (file instanceof File && file.size > 0) {
+          const uploaded = await uploadMediaFile(file, {
+            title: String(values.title ?? selected.title ?? file.name),
+            altText: `${section === "presentations" ? "Презентация" : "Тапсырма"} файлы`,
+            folder: section,
+          });
+          values.fileUrl = uploaded.url;
+          values.fileName = file.name;
+          values.mimeType = resourceMimeType(file);
+          values.fileSizeBytes = String(file.size);
+        }
+        delete values.file;
+      }
       await apiRequest(section === "feedback" ? "/api/admin/feedback" : `/api/admin/content/${section}`, {
         method: "PATCH",
         body: JSON.stringify(section === "feedback" ? { id: selected.id, status: values.status, internalNote: values.internalNote } : { id: selected.id, values }),
       });
       setNotice("Контент қауіпсіз сақталды");
       setSelected(null);
-      await load();
+      await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Контент сақталмады");
     }
@@ -887,23 +1176,38 @@ function AdminView({ actor }: { actor: SessionUser }) {
     const values = Object.fromEntries(formData);
     try {
       if (section === "media") {
-        const response = await fetch("/api/admin/media-upload", { method: "POST", body: formData });
-        const payload = await response.json() as { ok: boolean; error?: { message?: string } };
-        if (!response.ok || !payload.ok) throw new Error(payload.error?.message ?? "Медиа жүктелмеді");
+        const file = formData.get("file");
+        if (!(file instanceof File) || file.size === 0) throw new Error("Файлды таңдаңыз");
+        await uploadMediaFile(file, {
+          title: String(values.title ?? file.name),
+          altText: String(values.altText ?? file.name),
+          folder: String(values.folder ?? "general"),
+        });
       } else {
         if (section === "syllabuses") {
           const file = formData.get("file");
           if (file instanceof File && file.size > 0) {
-            const upload = new FormData();
-            upload.set("file", file);
-            upload.set("title", String(values.title ?? "Силлабус"));
-            upload.set("altText", "Силлабус PDF");
-            upload.set("folder", "syllabuses");
-            const response = await fetch("/api/admin/media-upload", { method: "POST", body: upload });
-            const payload = await response.json() as { ok: boolean; data?: { url: string }; error?: { message?: string } };
-            if (!response.ok || !payload.ok || !payload.data) throw new Error(payload.error?.message ?? "PDF жүктелмеді");
-            values.pdfUrl = payload.data.url;
+            const uploaded = await uploadMediaFile(file, {
+              title: String(values.title ?? "Силлабус"),
+              altText: "Силлабус PDF",
+              folder: "syllabuses",
+            });
+            values.pdfUrl = uploaded.url;
           }
+          delete values.file;
+        }
+        if (["presentations", "assignments"].includes(section)) {
+          const file = formData.get("file");
+          if (!(file instanceof File) || file.size === 0) throw new Error("Файлды таңдаңыз");
+          const uploaded = await uploadMediaFile(file, {
+            title: String(values.title ?? file.name),
+            altText: `${section === "presentations" ? "Презентация" : "Тапсырма"} файлы`,
+            folder: section,
+          });
+          values.fileUrl = uploaded.url;
+          values.fileName = file.name;
+          values.mimeType = resourceMimeType(file);
+          values.fileSizeBytes = String(file.size);
           delete values.file;
         }
         await apiRequest(`/api/admin/content/${section}`, {
@@ -913,7 +1217,7 @@ function AdminView({ actor }: { actor: SessionUser }) {
       }
       setNotice("Жаңа контент сәтті қосылды");
       setCreating(false);
-      await load();
+      await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Жаңа контент қосылмады");
     }
@@ -953,7 +1257,7 @@ function AdminView({ actor }: { actor: SessionUser }) {
       await apiRequest(`/api/admin/content/${section}`, { method: "DELETE", body: JSON.stringify({ id, restore }) });
       setNotice(restore ? "Контент қалпына келтірілді" : "Контент архивке жіберілді");
       setSelected(null);
-      await load();
+      await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Әрекет орындалмады");
     }
@@ -965,7 +1269,7 @@ function AdminView({ actor }: { actor: SessionUser }) {
       await apiRequest("/api/admin/versions", { method: "POST", body: JSON.stringify({ versionId, entity: section, entityId: selected.id }) });
       setNotice("Контенттің алдыңғы нұсқасы қалпына келтірілді");
       setSelected(null);
-      await load();
+      await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Нұсқа қалпына келмеді");
     }
@@ -978,6 +1282,8 @@ function AdminView({ actor }: { actor: SessionUser }) {
       (section !== "feedback" || ["status", "internalNote"].includes(key))
       &&
       !["id", "createdAt", "updatedAt", "moduleId", "lessonId"].includes(key)
+      && !(section === "videos" && key === "slug")
+      && !(["presentations", "assignments"].includes(section) && ["fileName", "mimeType", "fileSizeBytes"].includes(key))
       && (typeof value === "string" || typeof value === "number"))
     : [];
 
@@ -1003,7 +1309,7 @@ function AdminView({ actor }: { actor: SessionUser }) {
             {section !== "audit" && <div className="admin-toolbar">
               <form className="search-field" onSubmit={(e) => { e.preventDefault(); void load(); }}><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Іздеу" aria-label="Іздеу" /></form>
               {section !== "users" && section !== "feedback" && <button className="button secondary" type="button" onClick={() => setShowDeleted((value) => !value)}>{showDeleted ? "Белсенді контент" : "Жойылғандар"}</button>}
-              {section !== "users" && section !== "feedback" && <button className="button primary add-content-button" type="button" onClick={() => { setCreating(true); setSelected(null); }}><Plus /> Жаңа контент</button>}
+              {section !== "users" && section !== "feedback" && section !== "elements" && <button className="button primary add-content-button" type="button" onClick={() => { setCreating(true); setSelected(null); }}><Plus /> Жаңа контент</button>}
             </div>}
           </div>
           {notice && <p className="save-message" role="status">{notice}</p>}
@@ -1034,14 +1340,25 @@ function AdminView({ actor }: { actor: SessionUser }) {
                     ? <textarea name={field.name} defaultValue={field.defaultValue} placeholder={field.placeholder} required={field.required} />
                     : field.type === "select"
                       ? <select name={field.name} defaultValue={field.defaultValue ?? field.options?.[0]?.value} required={field.required}>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-                      : <input name={field.name} type={field.type ?? "text"} defaultValue={field.type === "file" ? undefined : field.defaultValue} accept={field.type === "file" ? "image/jpeg,image/png,image/webp,image/gif,image/svg+xml,application/pdf" : undefined} placeholder={field.placeholder} required={field.required} min={field.type === "number" ? 0 : undefined} />}
+                      : <input name={field.name} type={field.type ?? "text"} defaultValue={field.type === "file" ? undefined : field.defaultValue} accept={field.type === "file" ? section === "presentations" ? ".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" : section === "assignments" ? ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : section === "syllabuses" ? ".pdf,application/pdf" : "image/jpeg,image/png,image/webp,image/gif,image/svg+xml,application/pdf,.ppt,.pptx,.doc,.docx" : undefined} placeholder={field.placeholder} required={field.required} min={field.type === "number" ? 0 : undefined} />}
                 </label>)}
                 <button className="button primary wide" type="submit"><Plus /> Контентті қосу</button>
               </form>}
-              {selected && <form className="content-editor" onSubmit={saveContent}>
+              {selected && section === "lessons" && <LessonAdminEditor lessonId={String(selected.id)} onClose={() => setSelected(null)} onSaved={async () => {
+                setNotice("Сабақтың барлық бөлімдері сақталды");
+                setSelected(null);
+                await Promise.all([load(), onContentChanged()]);
+              }} />}
+              {selected && section === "elements" && <ElementAdminEditor item={selected} onClose={() => setSelected(null)} onSaved={async () => {
+                setNotice("Элемент мәліметтері сақталды");
+                setSelected(null);
+                await Promise.all([load(), onContentChanged()]);
+              }} />}
+              {selected && section !== "lessons" && section !== "elements" && <form className="content-editor" onSubmit={saveContent}>
                 <div className="panel-head"><div><span>Редактор</span><h2>{contentTitle(selected)}</h2></div><button type="button" className="icon-button" onClick={() => setSelected(null)} aria-label="Редакторды жабу"><X /></button></div>
                 {section === "feedback" && <div className="feedback-context"><strong>{String(selected.userName ?? "Қолданушы")}</strong><small>@{String(selected.username ?? "—")} · {String(selected.email ?? "")}</small><p>{String(selected.message ?? "")}</p>{Boolean(selected.relatedPage) && <span>Қатысты бет: {String(selected.relatedPage)}</span>}</div>}
-                {editableFields.map(([key, value]) => <label key={key}>{key}{key === "status" ? <select name={key} defaultValue={String(value)}><option value="new">Жаңа</option><option value="read">Оқылды</option><option value="resolved">Шешілді</option></select> : <textarea name={key} defaultValue={String(value ?? "")} />}</label>)}
+                {["presentations", "assignments"].includes(section) && <label>Файлды ауыстыру (міндетті емес)<input name="file" type="file" accept={section === "presentations" ? ".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" : ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} /><small>Қазіргі файл: {String(selected.fileName ?? "—")}</small></label>}
+                {editableFields.map(([key, value]) => <label key={key}>{key}{key === "status" ? <select name={key} defaultValue={String(value)}>{(section === "feedback" ? [{ value: "new", label: "Жаңа" }, { value: "read", label: "Оқылды" }, { value: "resolved", label: "Шешілді" }] : statusOptions).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <textarea name={key} defaultValue={String(value ?? "")} />}</label>)}
                 <button className="button primary wide" type="submit"><Check /> Өзгерісті сақтау</button>
                 {section !== "feedback" && <button className="button secondary wide" type="button" onClick={() => void toggleDeleted(String(selected.id), showDeleted)}>{showDeleted ? "Қалпына келтіру" : "Архивке жіберу"}</button>}
                 {section !== "feedback" && <div className="version-history"><strong>Нұсқалар тарихы</strong>{versions.length ? versions.map((version) => <button type="button" key={version.id} onClick={() => void restoreVersion(version.id)}><span>v{version.version} · {version.createdBy}</span><small>{version.changeNote || "Өзгеріс сақталды"}</small></button>) : <small>Алдыңғы нұсқа әлі жоқ</small>}</div>}
@@ -1076,24 +1393,26 @@ function AuthView({ onSuccess, initialMode = "login" }: { onSuccess: (user: Sess
     }
     setBusy(true);
     try {
-      const result = await apiRequest<{ user: SessionUser }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify(mode === "login" ? {
+      const remember = mode === "login" && values.remember === "on";
+      const result = await apiRequest<{ user: SessionUser; token: string }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify(mode === "login" ? {
         username: String(values.username ?? ""), password: String(values.password ?? ""), remember: values.remember === "on",
       } : {
         name: String(values.name ?? ""), username: String(values.username ?? ""), email: String(values.email ?? ""),
         password: String(values.password ?? ""), passwordConfirm: String(values.passwordConfirm ?? ""),
         level: String(values.level ?? "10-сынып"), acceptedTerms: values.acceptedTerms === "on",
       }) });
+      saveApiToken(result.token, remember);
       onSuccess(result.user);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Сұрау орындалмады"); }
     finally { setBusy(false); }
   }
   function changeMode(next: "login" | "register") {
     setMode(next); setErrors({}); setNotice("");
-    window.history.replaceState(null, "", next === "login" ? "/login" : "/register");
+    window.history.replaceState(null, "", appPath(next === "login" ? "/login" : "/register"));
   }
   return <div className="auth-page">
     <section className="auth-aside"><Brand /><div><span className="eyebrow"><ShieldCheck /> Қауіпсіз оқу кеңістігі</span><h1>Химиямен<br />бірге өс.</h1><p>Оқу прогресің, жетістіктерің және тәжірибе нәтижелерің бір жерде қауіпсіз сақталады.</p></div><div className="auth-quote"><Atom /><p>«Ғылым — жауаптар жинағы емес, дұрыс сұрақ қоя білу өнері.»</p></div></section>
-    <section className="auth-form-wrap"><button className="back-link" onClick={() => { window.location.href = "/"; }}><ChevronLeft /> Басты бетке</button>
+    <section className="auth-form-wrap"><button className="back-link" onClick={() => { window.location.href = appPath("/"); }}><ChevronLeft /> Басты бетке</button>
       <form className="auth-form" onSubmit={submit} noValidate>
         <span>{mode === "login" ? "Қош келдіңіз!" : "Жаңа оқу жолы"}</span>
         <h2>{mode === "login" ? "Аккаунтқа кіру" : "Жаңа аккаунт ашу"}</h2>
@@ -1112,10 +1431,21 @@ function AuthView({ onSuccess, initialMode = "login" }: { onSuccess: (user: Sess
 }
 
 type LearningContentResponse = {
-  lessons: Array<{ id: string; title: string; objective: string; xpReward: number; unit: string; course: string }>;
-  blocks: Array<{ lessonId: string; type: string; content: string; position: number }>;
-  questions: Array<{ lessonId: string; prompt: string; correctAnswer: string; explanation: string; position: number }>;
+  lessons: Array<{ id: string; title: string; objective: string; gradeLevel: string | null; xpReward: number; unit: string; course: string }>;
+  blocks: Array<{ id: string; lessonId: string; type: string; content: string; position: number }>;
+  attachments: Array<{ lessonId: string; blockType: string; id: string; title: string; url: string; mimeType: string; altText: string; position: number }>;
+  questions: Array<{ lessonId: string; prompt: string; correctAnswer: string; explanation: string; position: number; options: string | null }>;
 };
+
+function questionOptions(value: string | null | undefined, fallback: string[]) {
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 4 && parsed.every((item) => typeof item === "string") ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function mergeLearningContent(content: LearningContentResponse) {
   const merged = curriculumLessons.map((lesson) => {
@@ -1128,6 +1458,7 @@ function mergeLearningContent(content: LearningContentResponse) {
     const questions = content.questions.filter((item) => item.lessonId === lesson.id);
     return {
       ...lesson,
+      grade: gradeLevels.includes(lessonOverride?.gradeLevel as GradeLevel) ? lessonOverride!.gradeLevel as GradeLevel : lesson.grade,
       title: lessonOverride?.title ?? lesson.title,
       objective: lessonOverride?.objective ?? lesson.objective,
       unit: lessonOverride?.unit ?? lesson.unit,
@@ -1135,14 +1466,17 @@ function mergeLearningContent(content: LearningContentResponse) {
       theory: theories.length ? theories : lesson.theory,
       example: example ?? lesson.example,
       remember: remember ?? lesson.remember,
+      attachments: content.attachments.filter((item) => item.lessonId === lesson.id),
       formula: formula ?? lesson.formula,
       quiz: lesson.quiz.map((question, index) => {
         const override = questions.find((item) => item.position === index + 1);
         if (!override) return question;
-        const answerIndex = question.options.findIndex((option) => option.toLocaleLowerCase("kk") === override.correctAnswer.toLocaleLowerCase("kk"));
+        const options = questionOptions(override.options, question.options);
+        const answerIndex = options.findIndex((option) => option.toLocaleLowerCase("kk") === override.correctAnswer.toLocaleLowerCase("kk"));
         return {
           ...question,
           question: override.prompt,
+          options,
           answer: answerIndex >= 0 ? answerIndex : question.answer,
           explanation: override.explanation,
         };
@@ -1152,7 +1486,7 @@ function mergeLearningContent(content: LearningContentResponse) {
   const known = new Set(merged.map((lesson) => lesson.id));
   const created = content.lessons.filter((lesson) => !known.has(lesson.id)).map((lesson): CurriculumLesson => {
     const blocks = content.blocks.filter((item) => item.lessonId === lesson.id);
-    const rawGrade = gradeLevels.find((grade) => `${lesson.course} ${lesson.unit}`.includes(grade)) ?? "10-сынып";
+    const rawGrade = gradeLevels.includes(lesson.gradeLevel as GradeLevel) ? lesson.gradeLevel as GradeLevel : gradeLevels.find((grade) => `${lesson.course} ${lesson.unit}`.includes(grade)) ?? "10-сынып";
     const questions = content.questions.filter((item) => item.lessonId === lesson.id).slice(0, 3);
     return {
       id: lesson.id, grade: rawGrade, unit: lesson.unit, title: lesson.title, minutes: 10, xp: lesson.xpReward,
@@ -1161,7 +1495,11 @@ function mergeLearningContent(content: LearningContentResponse) {
       formula: blocks.find((item) => ["formula", "chemical_equation"].includes(item.type))?.content,
       example: blocks.find((item) => ["example", "real_life"].includes(item.type))?.content ?? "Бұл сабаққа мысалды әкімші редактордан толықтыра алады.",
       remember: blocks.find((item) => ["remember", "summary"].includes(item.type))?.content ?? "Негізгі ұғымдарды өз сөзіңмен қайталап көр.",
-      quiz: questions.length === 3 ? questions.map((question) => ({ question: question.prompt, options: [question.correctAnswer, "Басқа жауап", "Берілгені жеткіліксіз", "Жауабы жоқ"], answer: 0, explanation: question.explanation })) : [1, 2, 3].map((number) => ({ question: `${number}. Сабақтың негізгі идеясын түсіндің бе?`, options: ["Иә", "Жоқ", "Қайталау керек", "Білмеймін"], answer: 0, explanation: "Сабақ мазмұнын тағы бір рет қысқаша қайтала." })),
+      attachments: content.attachments.filter((item) => item.lessonId === lesson.id),
+      quiz: questions.length === 3 ? questions.map((question) => {
+        const options = questionOptions(question.options, [question.correctAnswer, "Басқа жауап", "Берілгені жеткіліксіз", "Жауабы жоқ"]);
+        return { question: question.prompt, options, answer: Math.max(0, options.indexOf(question.correctAnswer)), explanation: question.explanation };
+      }) : [1, 2, 3].map((number) => ({ question: `${number}. Сабақтың негізгі идеясын түсіндің бе?`, options: ["Иә", "Жоқ", "Қайталау керек", "Білмеймін"], answer: 0, explanation: "Сабақ мазмұнын тағы бір рет қысқаша қайтала." })),
     };
   });
   return [...merged, ...created];
@@ -1185,23 +1523,26 @@ export default function ChemBridgeApp({
   const [completedLessonIds, setCompletedLessonIds] = useState<string[]>([]);
   const [selectedLessonId, setSelectedLessonId] = useState(curriculumLessons[0].id);
   const inApp = APP_VIEWS.includes(view);
+  const refreshPublicContent = useCallback(async () => {
+    const [learning, cms] = await Promise.all([
+      apiRequest<LearningContentResponse>("/api/learning-content"),
+      apiRequest<PublicCmsContent>("/api/public-content"),
+    ]);
+    setLearningLessons(mergeLearningContent(learning));
+    setPublicCms(cms);
+  }, []);
   useEffect(() => {
     apiRequest<SessionUser>("/api/session")
       .then((user) => { setActor(user); setSignedIn(true); })
       .catch(() => {
         if (APP_VIEWS.includes(initialView) && !["periodic", "reactions", "laboratory"].includes(initialView)) {
           setView("auth");
-          window.history.replaceState(null, "", "/login");
+          window.history.replaceState(null, "", appPath("/login"));
         }
       })
       .finally(() => setSessionChecked(true));
-    apiRequest<LearningContentResponse>("/api/learning-content")
-      .then((content) => setLearningLessons(mergeLearningContent(content)))
-      .catch(() => undefined);
-    apiRequest<PublicCmsContent>("/api/public-content")
-      .then(setPublicCms)
-      .catch(() => undefined);
-  }, [initialView]);
+    void refreshPublicContent().catch(() => undefined);
+  }, [initialView, refreshPublicContent]);
   useEffect(() => {
     if (!signedIn) return;
     apiRequest<{ progress: Array<{ lessonId: string; percent: number }> }>("/api/progress")
@@ -1211,7 +1552,7 @@ export default function ChemBridgeApp({
   const go = (next: View) => {
     if (APP_VIEWS.includes(next) && !signedIn && !["periodic", "reactions", "laboratory"].includes(next)) {
       setView("auth");
-      window.history.pushState(null, "", "/login");
+      window.history.pushState(null, "", appPath("/login"));
     } else if (next === "admin" && !["admin", "content_admin"].includes(actor?.role ?? "")) {
       setView("dashboard");
     } else if (next === "teacher" && !["teacher", "admin"].includes(actor?.role ?? "")) {
@@ -1277,18 +1618,19 @@ export default function ChemBridgeApp({
     publicCms?.navigation.find((item) => item.menu === "app" && item.href === id)?.label ?? fallback;
   async function logout() {
     await apiRequest("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
+    clearApiToken();
     setActor(null);
     setSignedIn(false);
     setCompletedLessonIds([]);
     window.sessionStorage.clear();
     setView("auth");
-    window.history.replaceState(null, "", "/login");
+    window.history.replaceState(null, "", appPath("/login"));
   }
   const initials = actor?.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "CB";
 
   if (!sessionChecked && inApp && !["periodic", "reactions", "laboratory"].includes(view)) return <main className={dark ? "theme-dark" : ""}><div className="route-loading" role="status">Аккаунт тексерілуде…</div></main>;
 
-  if (view === "auth") return <main className={dark ? "theme-dark" : ""}><AuthView initialMode={initialAuthMode} onSuccess={(user) => { setActor(user); setSignedIn(true); setView("dashboard"); window.history.replaceState(null, "", "/dashboard"); }} /></main>;
+  if (view === "auth") return <main className={dark ? "theme-dark" : ""}><AuthView initialMode={initialAuthMode} onSuccess={(user) => { setActor(user); setSignedIn(true); setView("dashboard"); window.history.replaceState(null, "", appPath("/dashboard")); }} /></main>;
 
   return (
     <main className={dark ? "theme-dark" : ""}>
@@ -1300,7 +1642,6 @@ export default function ChemBridgeApp({
           {navItems.map(([id, label, Icon]) => <button className={view === id || (id === "world" && view === "lesson") ? "active" : ""} onClick={() => go(id)} key={id}><Icon />{navLabel(id, label)}{id === "world" && <small>{completedLessonIds.length}</small>}</button>)}
           {actor && ["student", "school_student", "university_student"].includes(actor.role) && <button className={view === "feedback" ? "active" : ""} onClick={() => go("feedback")}><MessageSquare /> Кері байланыс</button>}
           <span>Басқару</span>
-          {actor && ["teacher", "admin"].includes(actor.role) && <button className={view === "teacher" ? "active" : ""} onClick={() => go("teacher")}><GraduationCap /> Мұғалім панелі</button>}
           {(actor?.role === "admin" || actor?.role === "content_admin") && <button className={view === "admin" ? "active" : ""} onClick={() => go("admin")}><ShieldCheck /> Әкімші панелі</button>}
         </nav>
         <div className="sidebar-user"><button onClick={() => go("profile")}><span>{initials}</span><div><strong>{actor?.name ?? "ChemBridge оқушысы"}</strong><small>{actor?.level ?? "Оқу профилі"} · {actor?.xp ?? 0} XP</small></div><ChevronRight /></button><button className="logout-link" onClick={() => void logout()}><LogOut /> Жүйеден шығу</button></div>
@@ -1322,12 +1663,13 @@ export default function ChemBridgeApp({
           {view === "quizzes" && <QuizView actor={actor} lessons={learningLessons} />}
           {view === "videos" && <VideoLessonsView items={publicCms?.videos ?? []} actor={actor} />}
           {view === "syllabuses" && <SyllabusView items={publicCms?.syllabuses ?? []} actor={actor} />}
+          {view === "presentations" && <LearningResourcesView kind="presentations" items={publicCms?.presentations ?? []} actor={actor} />}
+          {view === "assignments" && <LearningResourcesView kind="assignments" items={publicCms?.assignments ?? []} actor={actor} />}
           {view === "feedback" && actor && <FeedbackView />}
           {view === "profile" && <ProfileView actor={actor} lessons={learningLessons} />}
-          {view === "teacher" && actor && ["teacher", "admin"].includes(actor.role) && <TeacherView />}
-          {view === "admin" && actor && (actor.role === "admin" || actor.role === "content_admin") && <AdminView actor={actor} />}
+          {view === "admin" && actor && (actor.role === "admin" || actor.role === "content_admin") && <AdminView actor={actor} onContentChanged={refreshPublicContent} />}
         </motion.div></AnimatePresence>
-        {!inApp && <footer><Brand /><p>Химияны зертте. Тәжірибе жаса. Білімді байланыстыр.</p><div><button onClick={() => go("teacher")}>Мұғалімдерге</button><button onClick={() => go("admin")}>Әкімшілік</button><button onClick={() => go("auth")}>Кіру</button></div><small>© 2026 ChemBridge. Қауіпсіз ғылыми білім.</small></footer>}
+        {!inApp && <footer><Brand /><p>Химияны зертте. Тәжірибе жаса. Білімді байланыстыр.</p><div><button onClick={() => go("admin")}>Әкімшілік</button><button onClick={() => go("auth")}>Кіру</button></div><small>© 2026 ChemBridge. Қауіпсіз ғылыми білім.</small></footer>}
       </div>
       {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-label="Мәзірді жабу" />}
     </main>

@@ -7,7 +7,7 @@ for migration in sorted(pathlib.Path("drizzle").glob("*.sql")):
 
 print("counts", connection.execute("SELECT COUNT(*) FROM chemical_elements").fetchone()[0], connection.execute("SELECT COUNT(*) FROM chemical_reactions").fetchone()[0], connection.execute("SELECT COUNT(*) FROM laboratory_experiments").fetchone()[0])
 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-required = {"video_lessons", "syllabuses", "feedback_messages", "experiment_progress"}
+required = {"video_lessons", "syllabuses", "presentations", "assignments", "feedback_messages", "experiment_progress"}
 print("new_tables", sorted(tables & required))
 assert required <= tables
 assert connection.execute("SELECT COUNT(*) FROM chemical_elements").fetchone()[0] == 118

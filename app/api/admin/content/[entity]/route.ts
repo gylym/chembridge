@@ -6,7 +6,7 @@ import { assertPublishable, createContentVersion, sanitizeCmsText, workflowStatu
 import { getD1 } from "../../../../../server/database";
 import { apiFailure, apiSuccess, ApiError } from "../../../../../server/http";
 import { enforceMutationSecurity } from "../../../../../server/security";
-import { assertSafePdfUrl, extractYouTubeVideoId } from "../../../../../server/media-validation";
+import { assertSafePdfUrl, assertSafeResourceUrl, extractYouTubeVideoId } from "../../../../../server/media-validation";
 
 const entityConfig = {
   courses: {
@@ -23,9 +23,9 @@ const entityConfig = {
   },
   lessons: {
     table: "lessons",
-    select: "id, module_id AS moduleId, slug, title, objective, status, position, xp_reward AS xpReward, updated_at AS updatedAt",
+    select: "id, module_id AS moduleId, slug, title, objective, grade_level AS gradeLevel, status, position, xp_reward AS xpReward, updated_at AS updatedAt",
     searchable: ["title", "objective", "slug"],
-    editable: ["slug", "title", "objective", "status", "position", "xp_reward"],
+    editable: ["slug", "title", "objective", "grade_level", "status", "position", "xp_reward"],
   },
   blocks: {
     table: "lesson_content_blocks",
@@ -49,7 +49,7 @@ const entityConfig = {
     table: "chemical_elements",
     select: "id, atomic_number AS atomicNumber, symbol, name_kk AS nameKk, details, updated_at AS updatedAt",
     searchable: ["symbol", "name_kk"],
-    editable: ["symbol", "name_kk", "details"],
+    editable: ["atomic_number", "symbol", "name_kk", "details"],
   },
   reactions: {
     table: "chemical_reactions",
@@ -74,6 +74,18 @@ const entityConfig = {
     select: "id, title, description, level, course_id AS courseId, academic_year AS academicYear, semester, language, author, pdf_url AS pdfUrl, file_size_bytes AS fileSizeBytes, version, status, published_at AS publishedAt, updated_at AS updatedAt",
     searchable: ["title", "description", "level", "academic_year", "author"],
     editable: ["title", "description", "level", "course_id", "academic_year", "semester", "language", "author", "pdf_url", "file_size_bytes", "version", "status", "published_at"],
+  },
+  presentations: {
+    table: "presentations",
+    select: "id, title, description, level, course_id AS courseId, topic, author, file_url AS fileUrl, file_name AS fileName, mime_type AS mimeType, file_size_bytes AS fileSizeBytes, slide_count AS slideCount, position, status, published_at AS publishedAt, updated_at AS updatedAt",
+    searchable: ["title", "description", "level", "topic", "author", "file_name"],
+    editable: ["title", "description", "level", "course_id", "topic", "author", "file_url", "file_name", "mime_type", "file_size_bytes", "slide_count", "position", "status", "published_at"],
+  },
+  assignments: {
+    table: "assignments",
+    select: "id, title, description, instructions, level, course_id AS courseId, topic, author, file_url AS fileUrl, file_name AS fileName, mime_type AS mimeType, file_size_bytes AS fileSizeBytes, estimated_minutes AS estimatedMinutes, position, status, published_at AS publishedAt, updated_at AS updatedAt",
+    searchable: ["title", "description", "instructions", "level", "topic", "author", "file_name"],
+    editable: ["title", "description", "instructions", "level", "course_id", "topic", "author", "file_url", "file_name", "mime_type", "file_size_bytes", "estimated_minutes", "position", "status", "published_at"],
   },
   achievements: {
     table: "achievements",
@@ -192,14 +204,15 @@ function buildCreation(entity: Entity, values: Record<string, string | number>, 
     case "lessons": {
       const data = z.object({
         moduleId: shortText,
-        slug: z.string().trim().min(2).max(100).regex(/^[a-z0-9-]+$/),
+        slug: z.string().trim().min(2).max(100).regex(/^[a-z0-9-]+$/).optional(),
         title: shortText,
         objective: longText,
+        gradeLevel: z.enum(["7-сынып", "8-сынып", "9-сынып", "10-сынып", "11-сынып", "Студент"]),
         status,
         position: positivePosition,
         xpReward: z.coerce.number().int().min(0).max(10_000),
       }).parse(values);
-      return { id, columns: ["module_id", "slug", "title", "objective", "status", "position", "xp_reward"], values: [data.moduleId, data.slug, data.title, data.objective, data.status, data.position, data.xpReward] };
+      return { id, columns: ["module_id", "slug", "title", "objective", "grade_level", "status", "position", "xp_reward"], values: [data.moduleId, data.slug ?? `lesson-${id.split(":").pop()}`, data.title, data.objective, data.gradeLevel, data.status, data.position, data.xpReward] };
     }
     case "blocks": {
       const data = z.object({ lessonId: shortText, type: z.enum(["theory", "heading", "formula", "example", "remember", "question", "definition", "key_concept", "chemical_equation", "real_life", "youtube", "pdf", "warning", "safety", "summary", "materials"]), content: longText, position: positivePosition }).parse(values);
@@ -233,13 +246,21 @@ function buildCreation(entity: Entity, values: Record<string, string | number>, 
       return { id, columns: ["title", "description", "objective", "learning_outcome", "equipment", "reagents", "safety", "expected_observation", "equation", "explanation", "conclusion", "visual_effect", "status"], values: [data.title, data.description, data.objective, data.learningOutcome, data.equipment, data.reagents, data.safety, data.expectedObservation, data.equation, data.explanation, data.conclusion, data.visualEffect, data.status] };
     }
     case "videos": {
-      const data = z.object({ title: shortText, slug: z.string().trim().min(2).max(100).regex(/^[a-z0-9-]+$/), description: longText, youtubeUrl: z.string().trim().max(2_000), author: shortText, level: shortText, courseId: z.string().trim().max(200).optional(), topic: shortText, durationMinutes: z.coerce.number().int().min(1).max(600), difficulty: shortText, position: positivePosition, status }).parse(values);
+      const data = z.object({ title: shortText, slug: z.string().trim().min(2).max(100).regex(/^[a-z0-9-]+$/).optional(), description: longText, youtubeUrl: z.string().trim().max(2_000), author: shortText, level: shortText, courseId: z.string().trim().max(200).optional(), topic: shortText, durationMinutes: z.coerce.number().int().min(1).max(600), difficulty: shortText, position: positivePosition, status }).parse(values);
       const videoId = extractYouTubeVideoId(data.youtubeUrl);
-      return { id, columns: ["title", "slug", "description", "youtube_url", "youtube_video_id", "author", "level", "course_id", "topic", "duration_minutes", "difficulty", "position", "status", "published_at", "created_by", "updated_by"], values: [data.title, data.slug, data.description, data.youtubeUrl, videoId, data.author, data.level, data.courseId || null, data.topic, data.durationMinutes, data.difficulty, data.position, data.status, data.status === "published" ? Math.floor(Date.now() / 1000) : null, actorId, actorId] };
+      return { id, columns: ["title", "slug", "description", "youtube_url", "youtube_video_id", "author", "level", "course_id", "topic", "duration_minutes", "difficulty", "position", "status", "published_at", "created_by", "updated_by"], values: [data.title, data.slug ?? `video-${videoId.toLowerCase()}`, data.description, data.youtubeUrl, videoId, data.author, data.level, data.courseId || null, data.topic, data.durationMinutes, data.difficulty, data.position, data.status, data.status === "published" ? Math.floor(Date.now() / 1000) : null, actorId, actorId] };
     }
     case "syllabuses": {
       const data = z.object({ title: shortText, description: longText, level: shortText, courseId: z.string().trim().max(200).optional(), academicYear: z.string().trim().min(4).max(20), semester: shortText, language: shortText, author: shortText, pdfUrl: z.string().trim().max(2_000), version: shortText, status }).parse(values);
       return { id, columns: ["title", "description", "level", "course_id", "academic_year", "semester", "language", "author", "pdf_url", "version", "status", "published_at", "created_by", "updated_by"], values: [data.title, data.description, data.level, data.courseId || null, data.academicYear, data.semester, data.language, data.author, assertSafePdfUrl(data.pdfUrl), data.version, data.status, data.status === "published" ? Math.floor(Date.now() / 1000) : null, actorId, actorId] };
+    }
+    case "presentations": {
+      const data = z.object({ title: shortText, description: longText, level: shortText, courseId: z.string().trim().max(200).optional(), topic: shortText, author: shortText, fileUrl: z.string().trim().max(2_000), fileName: shortText, mimeType: shortText, fileSizeBytes: z.coerce.number().int().min(0).optional(), slideCount: z.coerce.number().int().min(1).max(2_000).optional(), position: positivePosition, status }).parse(values);
+      return { id, columns: ["title", "description", "level", "course_id", "topic", "author", "file_url", "file_name", "mime_type", "file_size_bytes", "slide_count", "position", "status", "published_at", "created_by", "updated_by"], values: [data.title, data.description, data.level, data.courseId || null, data.topic, data.author, assertSafeResourceUrl(data.fileUrl), data.fileName, data.mimeType, data.fileSizeBytes ?? null, data.slideCount ?? null, data.position, data.status, data.status === "published" ? Math.floor(Date.now() / 1000) : null, actorId, actorId] };
+    }
+    case "assignments": {
+      const data = z.object({ title: shortText, description: longText, instructions: longText, level: shortText, courseId: z.string().trim().max(200).optional(), topic: shortText, author: shortText, fileUrl: z.string().trim().max(2_000), fileName: shortText, mimeType: shortText, fileSizeBytes: z.coerce.number().int().min(0).optional(), estimatedMinutes: z.coerce.number().int().min(1).max(2_000).optional(), position: positivePosition, status }).parse(values);
+      return { id, columns: ["title", "description", "instructions", "level", "course_id", "topic", "author", "file_url", "file_name", "mime_type", "file_size_bytes", "estimated_minutes", "position", "status", "published_at", "created_by", "updated_by"], values: [data.title, data.description, data.instructions, data.level, data.courseId || null, data.topic, data.author, assertSafeResourceUrl(data.fileUrl), data.fileName, data.mimeType, data.fileSizeBytes ?? null, data.estimatedMinutes ?? null, data.position, data.status, data.status === "published" ? Math.floor(Date.now() / 1000) : null, actorId, actorId] };
     }
     case "achievements": {
       const data = z.object({ code: z.string().trim().min(2).max(80).regex(/^[a-z0-9_]+$/), title: shortText, description: longText, xpReward: z.coerce.number().int().min(0).max(10_000) }).parse(values);
@@ -366,7 +387,9 @@ export async function POST(
     return apiSuccess({ id: creation.id }, 201);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return apiFailure(new ApiError(400, "VALIDATION_ERROR", "Міндетті өрістерді дұрыс толтырыңыз", z.flattenError(error).fieldErrors));
+      const fieldLabels: Record<string, string> = { title: "Видео атауы", description: "Қысқа сипаттама", youtubeUrl: "YouTube сілтемесі", author: "Автор", level: "Деңгей", topic: "Тақырып", durationMinutes: "Ұзақтығы", difficulty: "Қиындығы", position: "Реті", status: "Күйі", pdfUrl: "PDF сілтемесі" };
+      const field = String(error.issues[0]?.path[0] ?? "Белгісіз өріс");
+      return apiFailure(new ApiError(400, "VALIDATION_ERROR", `${fieldLabels[field] ?? field} өрісін дұрыс толтырыңыз`, z.flattenError(error).fieldErrors));
     }
     return apiFailure(error);
   }
@@ -391,11 +414,21 @@ export async function PATCH(
     if (!before) throw new ApiError(404, "NOT_FOUND", "Контент табылмады");
 
     const normalizedValues: Record<string, string | number> = { ...parsed.data.values };
+    if (config.editable.includes("status" as never) && "status" in normalizedValues) {
+      const parsedStatus = status.safeParse(normalizedValues.status);
+      if (!parsedStatus.success) {
+        throw new ApiError(400, "INVALID_STATUS", "Контент күйі дұрыс емес");
+      }
+      normalizedValues.status = parsedStatus.data;
+    }
     if (entity === "videos" && typeof normalizedValues.youtubeUrl === "string") {
       normalizedValues.youtubeVideoId = extractYouTubeVideoId(normalizedValues.youtubeUrl);
     }
     if (entity === "syllabuses" && typeof normalizedValues.pdfUrl === "string") {
       normalizedValues.pdfUrl = assertSafePdfUrl(normalizedValues.pdfUrl);
+    }
+    if (["presentations", "assignments"].includes(entity) && typeof normalizedValues.fileUrl === "string") {
+      normalizedValues.fileUrl = assertSafeResourceUrl(normalizedValues.fileUrl);
     }
     const assignments: string[] = [];
     const values: Array<string | number> = [];
@@ -408,6 +441,9 @@ export async function PATCH(
         : cleanValue(rawValue));
     }
     if (!assignments.length) throw new ApiError(400, "NO_CHANGES", "Өзгертуге болатын өріс табылмады");
+    if (["videos", "syllabuses", "presentations", "assignments"].includes(entity) && normalizedValues.status === "published") {
+      assignments.push("published_at = COALESCE(published_at, unixepoch())");
+    }
     assignments.push("updated_at = unixepoch()");
     if (normalizedValues.status === "published" && actor.role === "teacher") {
       throw new ApiError(403, "PUBLISH_FORBIDDEN", "Мұғалім контентті тек тексеруге жібере алады");

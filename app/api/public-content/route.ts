@@ -4,7 +4,7 @@ import { apiFailure, apiSuccess } from "../../../server/http";
 export async function GET() {
   try {
     const db = getD1();
-    const [elements, pages, sections, texts, navigation, reactions, laboratories, labSteps, achievements, videos, syllabuses] = await Promise.all([
+    const [elements, pages, sections, texts, navigation, reactions, laboratories, labSteps, achievements, videos, syllabuses, presentations, assignments] = await Promise.all([
       db.prepare(
         `SELECT atomic_number AS atomicNumber, symbol, name_kk AS nameKk, details
          FROM chemical_elements WHERE deleted_at IS NULL ORDER BY atomic_number LIMIT 118`,
@@ -60,6 +60,20 @@ export async function GET() {
          FROM syllabuses WHERE status = 'published' AND deleted_at IS NULL
          ORDER BY academic_year DESC, title LIMIT 200`,
       ).all(),
+      db.prepare(
+        `SELECT id, title, description, level, topic, author, file_url AS fileUrl,
+                file_name AS fileName, mime_type AS mimeType, file_size_bytes AS fileSizeBytes,
+                slide_count AS slideCount, position
+         FROM presentations WHERE status = 'published' AND deleted_at IS NULL
+         ORDER BY level, position, published_at DESC LIMIT 200`,
+      ).all(),
+      db.prepare(
+        `SELECT id, title, description, instructions, level, topic, author, file_url AS fileUrl,
+                file_name AS fileName, mime_type AS mimeType, file_size_bytes AS fileSizeBytes,
+                estimated_minutes AS estimatedMinutes, position
+         FROM assignments WHERE status = 'published' AND deleted_at IS NULL
+         ORDER BY level, position, published_at DESC LIMIT 200`,
+      ).all(),
     ]);
     return apiSuccess({
       pages: pages.results,
@@ -73,6 +87,8 @@ export async function GET() {
       achievements: achievements.results,
       videos: videos.results,
       syllabuses: syllabuses.results,
+      presentations: presentations.results,
+      assignments: assignments.results,
     });
   } catch (error) {
     return apiFailure(error);

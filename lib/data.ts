@@ -159,6 +159,7 @@ export type CurriculumLesson = {
   formula?: string;
   example: string;
   remember: string;
+  attachments?: Array<{ id: string; blockType: string; title: string; url: string; mimeType: string; altText: string }>;
   quiz: LessonQuizQuestion[];
 };
 
