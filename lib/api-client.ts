@@ -16,6 +16,7 @@ export class ApiClientError extends Error {
 
 const REMOTE_API_ORIGIN = "https://chembridge-kz-learning.chatgpt-edu-3017.chatgpt.site";
 const TOKEN_KEY = "chembridge_api_token";
+let activeApiToken: string | null = null;
 
 function usesRemoteApi() {
   return typeof window !== "undefined" && window.location.hostname === "gylym.github.io";
@@ -26,11 +27,12 @@ function readToken() {
   // Never keep a cross-origin bearer token in persistent storage. Remove the
   // legacy value during migration and scope the token to the current tab.
   window.localStorage.removeItem(TOKEN_KEY);
-  return window.sessionStorage.getItem(TOKEN_KEY);
+  return activeApiToken ?? window.sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function saveApiToken(token: string) {
   if (typeof window === "undefined") return;
+  activeApiToken = token;
   window.localStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(TOKEN_KEY);
   // The production Site uses a secure HttpOnly cookie. A browser-readable
@@ -41,6 +43,7 @@ export function saveApiToken(token: string) {
 
 export function clearApiToken() {
   if (typeof window === "undefined") return;
+  activeApiToken = null;
   window.localStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(TOKEN_KEY);
 }
@@ -75,7 +78,9 @@ export async function apiFetch(url: string, init?: RequestInit) {
     cache: "no-store",
     ...init,
     headers,
-    credentials: usesRemoteApi() ? "omit" : "same-origin",
+    // Remote credential sessions use a short-lived bearer token and a secure
+    // partitioned HttpOnly cookie as a browser-compatible fallback.
+    credentials: usesRemoteApi() ? "include" : "same-origin",
   });
 }
 
