@@ -208,18 +208,6 @@ function HomeView({ onStart, onNavigate, cms }: { onStart: () => void; onNavigat
         </div>
       </section>
 
-      <section className="section learning-path-section" aria-labelledby="learning-path-title">
-        <div className="section-heading left"><span>Түсінікті оқу маршруты</span><h2 id="learning-path-title">Бір сабақ — төрт нақты қадам</h2><p>Сыныбыңды таңдап, тақырыпты түсініп, тәжірибеде қолданып, қысқа тексерумен бекіт.</p></div>
-        <div className="learning-path-grid">
-          {[
-            ["01", "Деңгейді таңда", "7–11 сынып немесе ЖОО бағыты бойынша өз бағдарламаңды аш."],
-            ["02", "Тақырыпты түсін", "Оқу мақсаты, қысқа түсіндірме, формула және мысалды ретімен оқы."],
-            ["03", "Қолданып көр", "Реакция, периодтық кесте немесе виртуалды тәжірибемен білімді байланыстыр."],
-            ["04", "Өзіңді тексер", "Сабақ соңындағы 3 сұраққа жауап беріп, келесі қадамға өт."],
-          ].map(([number, title, text]) => <article key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></article>)}
-        </div>
-      </section>
-
       <section className="section periodic-preview">
         <div className="preview-copy">
           <div className="eyebrow"><Atom size={15} /> Интерактивті анықтамалық</div>
