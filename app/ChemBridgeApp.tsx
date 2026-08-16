@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Atom,
   Award,
-  BarChart3,
   Beaker,
   BookOpen,
   Check,
@@ -49,7 +48,7 @@ import { z } from "zod";
 import { equationDifference, gradeQuiz, isEquationBalanced } from "../lib/chemistry";
 import { curriculumLessons, elements, experiments, gradeLevels, reactions, type ChemicalElement, type CurriculumLesson, type GradeLevel } from "../lib/data";
 import { messages } from "../messages/kk";
-import { apiRequest, appPath, clearApiToken, saveApiToken, uploadMediaFile } from "../lib/api-client";
+import { ApiClientError, apiRequest, appPath, clearApiToken, saveApiToken, uploadMediaFile } from "../lib/api-client";
 
 export type View =
   | "home"
@@ -83,7 +82,36 @@ const navItems = [
   ["assignments", "Тапсырмалар", NotebookPen],
 ] as const;
 
+const sidebarGroups = [
+  { label: "Оқу", items: navItems.filter(([id]) => ["dashboard", "world", "quizzes"].includes(id)) },
+  { label: "Интерактив", items: navItems.filter(([id]) => ["periodic", "reactions", "laboratory"].includes(id)) },
+  { label: "Материалдар", items: navItems.filter(([id]) => ["videos", "syllabuses", "presentations", "assignments"].includes(id)) },
+] as const;
+
 const APP_VIEWS: View[] = ["dashboard", "world", "lesson", "periodic", "reactions", "laboratory", "quizzes", "videos", "syllabuses", "presentations", "assignments", "feedback", "profile", "teacher", "admin"];
+
+const VIEW_PATHS: Record<View, string> = {
+  home: "/", dashboard: "/dashboard", world: "/lessons", lesson: "/lessons",
+  periodic: "/periodic", reactions: "/reactions", laboratory: "/laboratory",
+  quizzes: "/quizzes", videos: "/videos", syllabuses: "/syllabuses",
+  presentations: "/presentations", assignments: "/assignments", feedback: "/feedback",
+  profile: "/profile", teacher: "/teacher", admin: "/admin", auth: "/login",
+};
+
+const viewTitles: Partial<Record<View, string>> = {
+  dashboard: "Бақылау тақтасы", world: "Сабақтар", lesson: "Сабақ",
+  periodic: "Периодтық кесте", reactions: "Реакциялар", laboratory: "Зертхана",
+  quizzes: "Тесттер", videos: "Видеосабақтар", syllabuses: "Силлабустар",
+  presentations: "Презентациялар", assignments: "Тапсырмалар", feedback: "Кері байланыс",
+  profile: "Профиль", admin: "Әкімші панелі",
+};
+
+function viewFromLocation(): View {
+  if (typeof window === "undefined") return "home";
+  const rawPath = window.location.pathname.replace(/^\/chembridge(?=\/|$)/, "") || "/";
+  if (rawPath === "/login" || rawPath === "/register") return "auth";
+  return (Object.entries(VIEW_PATHS).find(([, path]) => path === rawPath)?.[0] as View | undefined) ?? "home";
+}
 
 const categoryNames: Record<string, string> = {
   all: "Барлығы",
@@ -99,9 +127,9 @@ const categoryNames: Record<string, string> = {
   actinide: "Актиноидтар",
 };
 
-function Brand({ compact = false }: { compact?: boolean }) {
+function Brand({ compact = false, onClick }: { compact?: boolean; onClick?: () => void }) {
   return (
-    <button className="brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="ChemBridge">
+    <button className="brand" onClick={onClick ?? (() => window.scrollTo({ top: 0, behavior: "smooth" }))} aria-label="ChemBridge басты беті">
       <span className="brand-mark"><Atom size={22} /></span>
       {!compact && <span>Chem<span>Bridge</span></span>}
     </button>
@@ -176,6 +204,18 @@ function HomeView({ onStart, onPeriodic, cms }: { onStart: () => void; onPeriodi
               <button onClick={title === "Периодтық кесте" ? onPeriodic : onStart}>Зерттеу <ChevronRight size={16} /></button>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="section learning-path-section" aria-labelledby="learning-path-title">
+        <div className="section-heading left"><span>Түсінікті оқу маршруты</span><h2 id="learning-path-title">Бір сабақ — төрт нақты қадам</h2><p>Сыныбыңды таңдап, тақырыпты түсініп, тәжірибеде қолданып, қысқа тексерумен бекіт.</p></div>
+        <div className="learning-path-grid">
+          {[
+            ["01", "Деңгейді таңда", "7–11 сынып немесе ЖОО бағыты бойынша өз бағдарламаңды аш."],
+            ["02", "Тақырыпты түсін", "Оқу мақсаты, қысқа түсіндірме, формула және мысалды ретімен оқы."],
+            ["03", "Қолданып көр", "Реакция, периодтық кесте немесе виртуалды тәжірибемен білімді байланыстыр."],
+            ["04", "Өзіңді тексер", "Сабақ соңындағы 3 сұраққа жауап беріп, келесі қадамға өт."],
+          ].map(([number, title, text]) => <article key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></article>)}
         </div>
       </section>
 
@@ -373,7 +413,7 @@ function PeriodicView({ items = elements }: { items?: readonly ChemicalElement[]
       </div>
       <div className="category-legend"><button className={category === "all" ? "active" : ""} onClick={() => { setCategory("all"); setQuery(""); }}>Барлығын көрсету</button>{Object.entries(categoryNames).slice(1).map(([key, value]) => <button className={category === key ? "active" : ""} onClick={() => setCategory(key)} key={key}><span className={`dot category-${key}`} />{value}</button>)}</div>
       <p className="periodic-hint"><Atom /> Карточканы ашу үшін кез келген элементті басыңыз. Мысалы, <button onClick={() => setSelected(items[7])}>Оттекті ашу</button>.</p>
-      {filtered.length ? <div className="periodic-grid">{filtered.map((element) => <button onClick={() => setSelected(element)} className={`periodic-element category-${element.category}`} key={element.number}><small>{element.number}</small><strong>{element.symbol}</strong><span>{element.name}</span><em>{element.mass}</em></button>)}</div> : <div className="empty-state"><Search size={32} /><h2>Элемент табылмады</h2><p>Іздеу сөзін немесе санатты өзгертіп көр.</p></div>}
+      {filtered.length ? <div className="periodic-grid-scroll" tabIndex={0} aria-label="Периодтық кесте, көлденең айналдыруға болады"><div className="periodic-grid">{filtered.map((element) => <button onClick={() => setSelected(element)} className={`periodic-element category-${element.category}`} key={element.number}><small>{element.number}</small><strong>{element.symbol}</strong><span>{element.name}</span><em>{element.mass}</em></button>)}</div></div> : <div className="empty-state"><Search size={32} /><h2>Элемент табылмады</h2><p>Іздеу сөзін немесе санатты өзгертіп көр.</p></div>}
       <AnimatePresence>{selected && <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={() => setSelected(null)}><motion.div role="dialog" aria-modal="true" aria-label={`${selected.name} элементі`} className="element-modal" initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }} onMouseDown={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={() => setSelected(null)} aria-label="Жабу"><X /></button>
         <div className="element-hero"><div className={`big-element category-${selected.category}`}><small>{selected.number}</small><strong>{selected.symbol}</strong><span>{selected.mass}</span></div><div><span>{categoryNames[selected.category]}</span><h2>{selected.name}</h2><p>{selected.international}</p></div></div>
@@ -568,33 +608,6 @@ function ProfileView({ actor, lessons }: { actor: SessionUser | null; lessons: C
   return <div className="page-shell"><div className="profile-head"><div className="profile-avatar">{initials}</div><div><span>{roleLabel} · {actor?.level ?? "Оқу деңгейі"}</span><h1>{name}</h1><p>@{actor?.username ?? "chembridge"} · Жеке оқу профилі</p></div><button className="button secondary" onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" })}><Settings /> Аккаунт ақпараты</button></div><div className="profile-grid"><section className="panel profile-level"><span>{level}-деңгей</span><h2>Химия зерттеушісі</h2><Progress value={(xp % 500) / 5} label={`${500 - xp % 500} XP қалды`} /><div><strong>{xp} XP</strong><span>Жалпы тәжірибе</span></div></section><section className="panel profile-stats"><div><BookOpen /><strong>{lessons.filter((lesson) => lesson.grade === levelForUser(actor?.level ?? "10-сынып")).length}</strong><span>Деңгейдегі сабақ</span></div><div><ClipboardCheck /><strong>3</strong><span>Әр сабақтағы тексеру сұрағы</span></div><div><Sparkles /><strong>{actor?.level ?? "—"}</strong><span>Оқу бағдарламасы</span></div></section></div></div>;
 }
 
-function TeacherView() {
-  const [title, setTitle] = useState("");
-  const [lessons, setLessons] = useState<string[]>([]);
-  const [status, setStatus] = useState("draft");
-  const [notice, setNotice] = useState("");
-  const [stats, setStats] = useState({ students: 0, lessons: 0, averageProgress: 0 });
-  useEffect(() => {
-    apiRequest<Array<{ title: string }>>("/api/teacher/lessons").then((items) => setLessons(items.map((item) => item.title))).catch(() => undefined);
-    apiRequest<typeof stats>("/api/teacher/stats").then(setStats).catch(() => undefined);
-  }, []);
-  async function addLesson(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    try {
-      await apiRequest("/api/teacher/lessons", { method: "POST", body: JSON.stringify({ title, objective: String(form.get("objective") ?? ""), status }) });
-      setLessons((current) => [...current, title.trim()]); setTitle(""); setNotice("Сабақ жоба ретінде серверде сақталды");
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Сабақ сақталмады"); }
-  }
-  return <div className="page-shell">
-    <div className="page-title"><div><span>Мұғалім кеңістігі</span><h1>Контент студиясы</h1><p>Сабақты жоба ретінде құрып, әкімші тексеруіне жіберіңіз.</p></div><span className="role-chip"><GraduationCap /> Мұғалім</span></div>
-    <div className="teacher-stats"><article><Users /><div><strong>{stats.students}</strong><span>Белсенді оқушы</span></div></article><article><BookOpen /><div><strong>{stats.lessons || lessons.length}</strong><span>Сабақ</span></div></article><article><BarChart3 /><div><strong>{stats.averageProgress}%</strong><span>Нақты орташа прогресс</span></div></article></div>
-    <div className="teacher-grid"><section className="panel course-manager"><div className="panel-head"><div><span>Менің контентім</span><h2>Сабақтар</h2></div></div>{lessons.map((lesson, i) => <div className="lesson-row" key={lesson}><span>{i + 1}</span><div><strong>{lesson}</strong><small>Дерекқорда сақталған</small></div></div>)}{!lessons.length && <p className="empty-state">Әзірге сабақ жоқ.</p>}</section>
-      <form className="panel lesson-form" onSubmit={addLesson}><span>Жаңа сабақ</span><h2>Сабақ құру</h2><label>Сабақ атауы<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Мысалы: Валенттік электрондар" required /></label><label>Оқу мақсаты<textarea name="objective" placeholder="Оқушы сабақ соңында нені біледі?" required minLength={10} /></label><label>Күйі<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="draft">Жоба</option><option value="in_review">Тексеруге жіберу</option></select></label>{notice && <p className="save-message" role="status">{notice}</p>}<button className="button primary wide" type="submit">Сабақты сақтау <Check /></button></form>
-    </div>
-  </div>;
-}
-
 type SessionUser = {
   id: string;
   username: string | null;
@@ -647,6 +660,14 @@ const adminSections: Array<[AdminSection, string]> = [
   ["audit", "Әкімшілік журнал"],
 ];
 
+const adminSectionGroups: Array<{ label: string; sections: AdminSection[] }> = [
+  { label: "Оқу контенті", sections: ["courses", "modules", "lessons", "quizzes", "questions", "grades", "subjects"] },
+  { label: "Интерактив", sections: ["elements", "reactions", "laboratories", "achievements", "challenges"] },
+  { label: "Оқу материалдары", sections: ["videos", "syllabuses", "presentations", "assignments", "media"] },
+  { label: "Сайт және байланыс", sections: ["pages", "pageSections", "texts", "navigation", "feedback"] },
+  { label: "Басқару", sections: ["users", "settings", "audit"] },
+];
+
 const statusOptions = [
   { value: "draft", label: "Жоба" },
   { value: "in_review", label: "Тексерілуде" },
@@ -654,6 +675,8 @@ const statusOptions = [
   { value: "published", label: "Жарияланған" },
   { value: "archived", label: "Архивте" },
 ];
+
+const statusLabels = Object.fromEntries(statusOptions.map((item) => [item.value, item.label])) as Record<string, string>;
 
 function relationOptions(items: AdminOption[], emptyLabel?: string) {
   return [
@@ -866,6 +889,38 @@ function createFields(section: AdminSection, options: AdminOptions): CreateField
   }
 }
 
+const editFieldLabels: Record<string, string> = {
+  slug: "URL атауы (slug)", title: "Атауы", description: "Сипаттамасы", status: "Күйі",
+  position: "Реті", objective: "Оқу мақсаты", gradeLevel: "Сынып", xpReward: "XP марапаты",
+  courseId: "Курс", moduleId: "Модуль", lessonId: "Сабақ", quizId: "Тест",
+  passScore: "Өту пайызы", type: "Түрі", content: "Мазмұны", prompt: "Сұрақ",
+  correctAnswer: "Дұрыс жауап", explanation: "Түсіндірме", balancedEquation: "Теңестірілген теңдеу",
+  equation: "Химиялық теңдеу", hint: "Кеңес", safety: "Қауіпсіздік нұсқаулығы",
+  learningOutcome: "Оқу нәтижесі", equipment: "Құралдар", reagents: "Реактивтер",
+  expectedObservation: "Күтілетін бақылау", conclusion: "Қорытынды", visualEffect: "Визуалды белгі",
+  youtubeUrl: "YouTube сілтемесі", author: "Автор", level: "Деңгей", topic: "Тақырып",
+  durationMinutes: "Ұзақтығы (минут)", difficulty: "Қиындығы", academicYear: "Оқу жылы",
+  semester: "Семестр", language: "Тілі", pdfUrl: "PDF сілтемесі", version: "Нұсқа",
+  slideCount: "Слайд саны", estimatedMinutes: "Орындау уақыты (минут)", instructions: "Орындау нұсқаулығы",
+  code: "Код", challengeDate: "Күні", payload: "Құрылымды дерек (JSON)", key: "Кілт",
+  value: "Мәні", locale: "Тіл", seoTitle: "SEO тақырыбы", seoDescription: "SEO сипаттамасы",
+  scheduledAt: "Жоспарланған уақыт", sectionKey: "Секция кілті", body: "Мәтіні",
+  isVisible: "Көрінуі", menu: "Мәзір", label: "Атауы", href: "Маршрут", icon: "Иконка",
+  requiredRole: "Қажетті рөл", parentId: "Негізгі пункт", altText: "Alt мәтін", caption: "Түсіндірме",
+  folder: "Қалта", internalNote: "Әкімшінің ішкі жазбасы",
+};
+
+function editFieldDefinition(section: AdminSection, key: string, value: unknown, options: AdminOptions): CreateField {
+  const configured = createFields(section, options).find((field) => field.name === key);
+  if (configured) return { ...configured, required: false };
+  const multiline = /description|objective|content|prompt|answer|explanation|hint|safety|equipment|reagents|observation|conclusion|instructions|body|payload|value|note/i.test(key);
+  return {
+    name: key,
+    label: editFieldLabels[key] ?? key.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`),
+    type: typeof value === "number" ? "number" : multiline ? "textarea" : "text",
+  };
+}
+
 type LessonEditorAttachment = { id: string; blockId: string; title: string; url: string; mimeType: string; altText: string };
 type LessonEditorBlock = { type: "theory" | "formula" | "example" | "remember"; content: string; position: number; attachments: LessonEditorAttachment[] };
 type LessonEditorQuestion = { id?: string; prompt: string; options: string[]; correctAnswerIndex: number; explanation: string; position: number };
@@ -974,8 +1029,8 @@ function LessonAdminEditor({ lessonId, onClose, onSaved }: { lessonId: string; o
   }
 
   if (!lesson) return <div className="content-editor"><div className="panel-head"><h2>Сабақ жүктелуде…</h2><button type="button" className="icon-button" onClick={onClose}><X /></button></div>{notice && <p className="save-message">{notice}</p>}</div>;
-  return <form className="content-editor lesson-admin-editor" onSubmit={save}>
-    <div className="panel-head"><div><span>Толық сабақ редакторы</span><h2>{lesson.title}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Редакторды жабу"><X /></button></div>
+  return <form className="content-editor lesson-admin-editor" onSubmit={save} aria-busy={busy}>
+    <div className="panel-head"><div><span>Толық сабақ редакторы</span><h2>{lesson.title}</h2></div><div className="editor-head-actions"><button className="button primary compact" type="submit" disabled={busy || uploading !== null}><Check /> {busy ? "Сақталуда…" : "Сақтау"}</button><button type="button" className="icon-button" onClick={onClose} aria-label="Редакторды жабу"><X /></button></div></div>
     <div className="lesson-editor-meta">
       <label>Сабақ атауы<input value={lesson.title} onChange={(e) => setLesson({ ...lesson, title: e.target.value })} required /></label>
       <label>Сынып<select value={lesson.gradeLevel || "10-сынып"} onChange={(e) => setLesson({ ...lesson, gradeLevel: e.target.value })}>{gradeLevels.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -1054,8 +1109,8 @@ function ElementAdminEditor({ item, onClose, onSaved }: { item: Record<string, u
     } catch (error) { setNotice(error instanceof Error ? error.message : "Элемент сақталмады"); }
     finally { setBusy(false); }
   }
-  return <form className="content-editor element-admin-editor" onSubmit={save}>
-    <div className="panel-head"><div><span>Периодтық кесте редакторы</span><h2>{nameKk || symbol}</h2></div><button type="button" className="icon-button" onClick={onClose}><X /></button></div>
+  return <form className="content-editor element-admin-editor" onSubmit={save} aria-busy={busy}>
+    <div className="panel-head"><div><span>Периодтық кесте редакторы</span><h2>{nameKk || symbol}</h2></div><div className="editor-head-actions"><button className="button primary compact" type="submit" disabled={busy}><Check /> {busy ? "Сақталуда…" : "Сақтау"}</button><button type="button" className="icon-button" onClick={onClose} aria-label="Редакторды жабу"><X /></button></div></div>
     <div className="element-editor-grid">
       <label>Атомдық нөмір<input type="number" min="1" max="118" value={atomicNumber} onChange={(e) => setAtomicNumber(Number(e.target.value))} required /></label>
       <label>Химиялық таңба<input value={symbol} onChange={(e) => setSymbol(e.target.value)} maxLength={3} required /></label>
@@ -1077,7 +1132,7 @@ function ElementAdminEditor({ item, onClose, onSaved }: { item: Record<string, u
 }
 
 function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentChanged: () => Promise<void> }) {
-  const [section, setSection] = useState<AdminSection>(actor.role === "admin" ? "users" : "pages");
+  const [section, setSection] = useState<AdminSection>(actor.role === "admin" ? "lessons" : "pages");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [content, setContent] = useState<Array<Record<string, unknown>>>([]);
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null);
@@ -1087,9 +1142,22 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editorDirty, setEditorDirty] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
   const [versions, setVersions] = useState<Array<{ id: string; version: number; changeNote: string | null; createdAt: number; createdBy: string }>>([]);
   const [stats, setStats] = useState({ users: 0, lessons: 0, elements: 0, reactions: 0, unreadFeedback: 0 });
+
+  function canReplaceEditor() {
+    return !editorDirty || window.confirm("Сақталмаған өзгерістер бар. Оларды сақтамай жабасыз ба?");
+  }
+
+  function closeGenericEditor() {
+    if (!canReplaceEditor()) return;
+    setSelected(null);
+    setCreating(false);
+    setEditorDirty(false);
+  }
 
   async function load() {
     setLoading(true);
@@ -1142,7 +1210,22 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
     if (!selected) return;
     const formData = new FormData(e.currentTarget);
     const values = Object.fromEntries(formData);
+    setSaving(true);
+    setNotice("");
     try {
+      if (section === "syllabuses") {
+        const file = formData.get("file");
+        if (file instanceof File && file.size > 0) {
+          const uploaded = await uploadMediaFile(file, {
+            title: String(values.title ?? selected.title ?? file.name),
+            altText: "Силлабус PDF",
+            folder: "syllabuses",
+          });
+          values.pdfUrl = uploaded.url;
+          values.fileSizeBytes = String(file.size);
+        }
+        delete values.file;
+      }
       if (["presentations", "assignments"].includes(section)) {
         const file = formData.get("file");
         if (file instanceof File && file.size > 0) {
@@ -1163,10 +1246,13 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
         body: JSON.stringify(section === "feedback" ? { id: selected.id, status: values.status, internalNote: values.internalNote } : { id: selected.id, values }),
       });
       setNotice("Контент қауіпсіз сақталды");
+      setEditorDirty(false);
       setSelected(null);
       await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Контент сақталмады");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1174,6 +1260,8 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const values = Object.fromEntries(formData);
+    setSaving(true);
+    setNotice("");
     try {
       if (section === "media") {
         const file = formData.get("file");
@@ -1216,10 +1304,13 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
         });
       }
       setNotice("Жаңа контент сәтті қосылды");
+      setEditorDirty(false);
       setCreating(false);
       await Promise.all([load(), onContentChanged()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Жаңа контент қосылмады");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -1240,8 +1331,10 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
   }
 
   async function openContent(item: Record<string, unknown>) {
+    if (!canReplaceEditor()) return;
     setSelected(item);
     setCreating(false);
+    setEditorDirty(false);
     if (section === "feedback") { setVersions([]); return; }
     try {
       const result = await apiRequest<{ items: typeof versions }>(`/api/admin/versions?entity=${encodeURIComponent(section)}&id=${encodeURIComponent(String(item.id))}`);
@@ -1281,10 +1374,9 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
     ? Object.entries(selected).filter(([key, value]) =>
       (section !== "feedback" || ["status", "internalNote"].includes(key))
       &&
-      !["id", "createdAt", "updatedAt", "moduleId", "lessonId"].includes(key)
-      && !(section === "videos" && key === "slug")
-      && !(["presentations", "assignments"].includes(section) && ["fileName", "mimeType", "fileSizeBytes"].includes(key))
-      && (typeof value === "string" || typeof value === "number"))
+      !["id", "createdAt", "updatedAt", "publishedAt", "moduleId", "lessonId", "youtubeVideoId", "mimeType", "fileSizeBytes"].includes(key)
+      && !(["presentations", "assignments"].includes(section) && ["fileName", "fileUrl"].includes(key))
+      && (typeof value === "string" || typeof value === "number" || (value === null && key === "internalNote")))
     : [];
 
   return (
@@ -1301,7 +1393,14 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
       </div>
       <div className="admin-workspace">
         <nav className="admin-tabs" aria-label="Әкімші бөлімдері">
-          {adminSections.filter(([id]) => actor.role === "admin" || (id !== "users" && id !== "settings" && id !== "audit")).map(([id, label]) => <button key={id} className={section === id ? "active" : ""} onClick={() => { setSection(id); setSelected(null); setCreating(false); }}>{label}</button>)}
+          {adminSectionGroups.map((group) => {
+            const visible = group.sections.filter((id) => actor.role === "admin" || (id !== "users" && id !== "settings" && id !== "audit"));
+            if (!visible.length) return null;
+            return <div className="admin-tab-group" key={group.label}><strong>{group.label}</strong>{visible.map((id) => {
+              const label = adminSections.find(([sectionId]) => sectionId === id)?.[1] ?? id;
+              return <button key={id} className={section === id ? "active" : ""} aria-current={section === id ? "page" : undefined} onClick={() => { if (!canReplaceEditor()) return; setSection(id); setSelected(null); setCreating(false); setEditorDirty(false); setNotice(""); }}>{label}</button>;
+            })}</div>;
+          })}
         </nav>
         <section className="panel admin-content">
           <div className="panel-head">
@@ -1309,7 +1408,7 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
             {section !== "audit" && <div className="admin-toolbar">
               <form className="search-field" onSubmit={(e) => { e.preventDefault(); void load(); }}><Search /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Іздеу" aria-label="Іздеу" /></form>
               {section !== "users" && section !== "feedback" && <button className="button secondary" type="button" onClick={() => setShowDeleted((value) => !value)}>{showDeleted ? "Белсенді контент" : "Жойылғандар"}</button>}
-              {section !== "users" && section !== "feedback" && section !== "elements" && <button className="button primary add-content-button" type="button" onClick={() => { setCreating(true); setSelected(null); }}><Plus /> Жаңа контент</button>}
+              {section !== "users" && section !== "feedback" && section !== "elements" && <button className="button primary add-content-button" type="button" onClick={() => { if (!canReplaceEditor()) return; setCreating(true); setSelected(null); setEditorDirty(false); setNotice(""); }}><Plus /> Жаңа контент</button>}
             </div>}
           </div>
           {notice && <p className="save-message" role="status">{notice}</p>}
@@ -1328,13 +1427,13 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
             <div className="content-admin-grid">
               <div className="admin-list">
                 {content.map((item) => <button className="content-row" key={String(item.id)} onClick={() => section !== "audit" && void openContent(item)}>
-                  <div><strong>{section === "audit" ? String(item.action) : contentTitle(item)}</strong><small>{section === "audit" ? `${String(item.actorName)} · ${String(item.entityType)}` : String(item.status ?? item.symbol ?? item.type ?? "Өңдеуге дайын")}</small></div>
+                  <div><strong>{section === "audit" ? String(item.action) : contentTitle(item)}</strong><small>{section === "audit" ? `${String(item.actorName)} · ${String(item.entityType)}` : statusLabels[String(item.status)] ?? String(item.symbol ?? item.type ?? "Өңдеуге дайын")}</small></div>
                   {section !== "audit" && <Settings />}
                 </button>)}
                 {!content.length && <p className="empty-state">Бұл бөлімде дерек табылмады.</p>}
               </div>
-              {creating && <form className="content-editor create-editor" onSubmit={addContent}>
-                <div className="panel-head"><div><span>Жаңа жазба</span><h2>{adminSections.find(([id]) => id === section)?.[1]} қосу</h2></div><button type="button" className="icon-button" onClick={() => setCreating(false)} aria-label="Форманы жабу"><X /></button></div>
+              {creating && <form className="content-editor create-editor" onSubmit={addContent} onChange={() => setEditorDirty(true)} aria-busy={saving}>
+                <div className="panel-head"><div><span>Жаңа жазба</span><h2>{adminSections.find(([id]) => id === section)?.[1]} қосу</h2></div><div className="editor-head-actions">{editorDirty && <span className="dirty-indicator">Сақталмаған</span>}<button className="button primary compact" type="submit" disabled={saving}><Plus /> {saving ? "Қосылуда…" : "Қосу"}</button><button type="button" className="icon-button" onClick={closeGenericEditor} aria-label="Форманы жабу"><X /></button></div></div>
                 {createFields(section, options).map((field) => <label key={field.name}>{field.label}
                   {field.type === "textarea"
                     ? <textarea name={field.name} defaultValue={field.defaultValue} placeholder={field.placeholder} required={field.required} />
@@ -1342,7 +1441,7 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
                       ? <select name={field.name} defaultValue={field.defaultValue ?? field.options?.[0]?.value} required={field.required}>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
                       : <input name={field.name} type={field.type ?? "text"} defaultValue={field.type === "file" ? undefined : field.defaultValue} accept={field.type === "file" ? section === "presentations" ? ".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" : section === "assignments" ? ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : section === "syllabuses" ? ".pdf,application/pdf" : "image/jpeg,image/png,image/webp,image/gif,image/svg+xml,application/pdf,.ppt,.pptx,.doc,.docx" : undefined} placeholder={field.placeholder} required={field.required} min={field.type === "number" ? 0 : undefined} />}
                 </label>)}
-                <button className="button primary wide" type="submit"><Plus /> Контентті қосу</button>
+                <button className="button primary wide" type="submit" disabled={saving}><Plus /> {saving ? "Қосылуда…" : "Контентті қосу"}</button>
               </form>}
               {selected && section === "lessons" && <LessonAdminEditor lessonId={String(selected.id)} onClose={() => setSelected(null)} onSaved={async () => {
                 setNotice("Сабақтың барлық бөлімдері сақталды");
@@ -1354,12 +1453,25 @@ function AdminView({ actor, onContentChanged }: { actor: SessionUser; onContentC
                 setSelected(null);
                 await Promise.all([load(), onContentChanged()]);
               }} />}
-              {selected && section !== "lessons" && section !== "elements" && <form className="content-editor" onSubmit={saveContent}>
-                <div className="panel-head"><div><span>Редактор</span><h2>{contentTitle(selected)}</h2></div><button type="button" className="icon-button" onClick={() => setSelected(null)} aria-label="Редакторды жабу"><X /></button></div>
+              {selected && section !== "lessons" && section !== "elements" && <form className="content-editor generic-content-editor" onSubmit={saveContent} onChange={() => setEditorDirty(true)} aria-busy={saving}>
+                <div className="panel-head"><div><span>Редактор</span><h2>{contentTitle(selected)}</h2></div><div className="editor-head-actions">{editorDirty && <span className="dirty-indicator">Сақталмаған</span>}<button className="button primary compact" type="submit" disabled={saving}><Check /> {saving ? "Сақталуда…" : "Сақтау"}</button><button type="button" className="icon-button" onClick={closeGenericEditor} aria-label="Редакторды жабу"><X /></button></div></div>
                 {section === "feedback" && <div className="feedback-context"><strong>{String(selected.userName ?? "Қолданушы")}</strong><small>@{String(selected.username ?? "—")} · {String(selected.email ?? "")}</small><p>{String(selected.message ?? "")}</p>{Boolean(selected.relatedPage) && <span>Қатысты бет: {String(selected.relatedPage)}</span>}</div>}
+                {section === "syllabuses" && <label>PDF файлды ауыстыру (міндетті емес)<input name="file" type="file" accept=".pdf,application/pdf" /><small>Жаңа файл таңдалмаса, қазіргі файл сақталады.</small></label>}
                 {["presentations", "assignments"].includes(section) && <label>Файлды ауыстыру (міндетті емес)<input name="file" type="file" accept={section === "presentations" ? ".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" : ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} /><small>Қазіргі файл: {String(selected.fileName ?? "—")}</small></label>}
-                {editableFields.map(([key, value]) => <label key={key}>{key}{key === "status" ? <select name={key} defaultValue={String(value)}>{(section === "feedback" ? [{ value: "new", label: "Жаңа" }, { value: "read", label: "Оқылды" }, { value: "resolved", label: "Шешілді" }] : statusOptions).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : <textarea name={key} defaultValue={String(value ?? "")} />}</label>)}
-                <button className="button primary wide" type="submit"><Check /> Өзгерісті сақтау</button>
+                {editableFields.map(([key, value]) => {
+                  const field = editFieldDefinition(section, key, value, options);
+                  const fieldOptions = key === "status"
+                    ? (section === "feedback" ? [{ value: "new", label: "Жаңа" }, { value: "read", label: "Оқылды" }, { value: "resolved", label: "Шешілді" }] : statusOptions)
+                    : field.options;
+                  return <label key={key}>{field.label}
+                    {fieldOptions
+                      ? <select name={key} defaultValue={String(value ?? "")}>{fieldOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+                      : field.type === "textarea"
+                        ? <textarea name={key} defaultValue={String(value ?? "")} />
+                        : <input name={key} type={field.type ?? "text"} defaultValue={String(value ?? "")} min={field.type === "number" ? 0 : undefined} />}
+                  </label>;
+                })}
+                <button className="button primary wide" type="submit" disabled={saving}><Check /> {saving ? "Сақталуда…" : "Өзгерісті сақтау"}</button>
                 {section !== "feedback" && <button className="button secondary wide" type="button" onClick={() => void toggleDeleted(String(selected.id), showDeleted)}>{showDeleted ? "Қалпына келтіру" : "Архивке жіберу"}</button>}
                 {section !== "feedback" && <div className="version-history"><strong>Нұсқалар тарихы</strong>{versions.length ? versions.map((version) => <button type="button" key={version.id} onClick={() => void restoreVersion(version.id)}><span>v{version.version} · {version.createdBy}</span><small>{version.changeNote || "Өзгеріс сақталды"}</small></button>) : <small>Алдыңғы нұсқа әлі жоқ</small>}</div>}
               </form>}
@@ -1378,6 +1490,11 @@ const clientRegisterSchema = z.object({
   passwordConfirm: z.string(),
 }).refine((data) => data.password === data.passwordConfirm, { path: ["passwordConfirm"], message: "Құпиясөздер сәйкес келмейді" });
 
+const clientLoginSchema = z.object({
+  username: z.string().trim().min(1, "Email немесе логинді енгізіңіз").min(3, "Логин кемінде 3 таңбадан тұрады"),
+  password: z.string().min(1, "Құпиясөзді енгізіңіз").max(128, "Құпиясөз тым ұзын"),
+});
+
 function AuthView({ onSuccess, initialMode = "login" }: { onSuccess: (user: SessionUser) => void; initialMode?: "login" | "register" }) {
   const [mode, setMode] = useState<"login" | "register">(initialMode);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -1387,10 +1504,8 @@ function AuthView({ onSuccess, initialMode = "login" }: { onSuccess: (user: Sess
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setErrors({}); setNotice("");
     const values = Object.fromEntries(new FormData(e.currentTarget));
-    if (mode === "register") {
-      const validation = clientRegisterSchema.safeParse(values);
-      if (!validation.success) { setErrors(Object.fromEntries(validation.error.issues.map((issue) => [String(issue.path[0]), issue.message]))); return; }
-    }
+    const validation = mode === "register" ? clientRegisterSchema.safeParse(values) : clientLoginSchema.safeParse(values);
+    if (!validation.success) { setErrors(Object.fromEntries(validation.error.issues.map((issue) => [String(issue.path[0]), issue.message]))); return; }
     setBusy(true);
     try {
       const remember = mode === "login" && values.remember === "on";
@@ -1403,7 +1518,12 @@ function AuthView({ onSuccess, initialMode = "login" }: { onSuccess: (user: Sess
       }) });
       saveApiToken(result.token, remember);
       onSuccess(result.user);
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Сұрау орындалмады"); }
+    } catch (error) {
+      if (error instanceof ApiClientError) {
+        setErrors(Object.fromEntries(Object.entries(error.fields).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])));
+      }
+      setNotice(error instanceof Error ? error.message : "Сұрау орындалмады");
+    }
     finally { setBusy(false); }
   }
   function changeMode(next: "login" | "register") {
@@ -1532,8 +1652,18 @@ export default function ChemBridgeApp({
     setPublicCms(cms);
   }, []);
   useEffect(() => {
+    const contentTimer = window.setTimeout(() => void refreshPublicContent().catch(() => undefined), 0);
     apiRequest<SessionUser>("/api/session")
-      .then((user) => { setActor(user); setSignedIn(true); })
+      .then((user) => {
+        setActor(user);
+        setSignedIn(true);
+        const cannotOpenAdmin = initialView === "admin" && !["admin", "content_admin"].includes(user.role);
+        const cannotOpenTeacher = initialView === "teacher" && !["teacher", "admin"].includes(user.role);
+        if (cannotOpenAdmin || cannotOpenTeacher) {
+          setView("dashboard");
+          window.history.replaceState(null, "", appPath("/dashboard"));
+        }
+      })
       .catch(() => {
         if (APP_VIEWS.includes(initialView) && !["periodic", "reactions", "laboratory"].includes(initialView)) {
           setView("auth");
@@ -1541,7 +1671,7 @@ export default function ChemBridgeApp({
         }
       })
       .finally(() => setSessionChecked(true));
-    void refreshPublicContent().catch(() => undefined);
+    return () => window.clearTimeout(contentTimer);
   }, [initialView, refreshPublicContent]);
   useEffect(() => {
     if (!signedIn) return;
@@ -1549,17 +1679,22 @@ export default function ChemBridgeApp({
       .then((result) => setCompletedLessonIds(result.progress.filter((item) => item.percent === 100).map((item) => item.lessonId)))
       .catch(() => undefined);
   }, [signedIn]);
+  useEffect(() => {
+    const handleHistory = () => setView(viewFromLocation());
+    window.addEventListener("popstate", handleHistory);
+    return () => window.removeEventListener("popstate", handleHistory);
+  }, []);
   const go = (next: View) => {
+    let resolved = next;
     if (APP_VIEWS.includes(next) && !signedIn && !["periodic", "reactions", "laboratory"].includes(next)) {
-      setView("auth");
-      window.history.pushState(null, "", appPath("/login"));
+      resolved = "auth";
     } else if (next === "admin" && !["admin", "content_admin"].includes(actor?.role ?? "")) {
-      setView("dashboard");
+      resolved = "dashboard";
     } else if (next === "teacher" && !["teacher", "admin"].includes(actor?.role ?? "")) {
-      setView("dashboard");
-    } else {
-      setView(next);
+      resolved = "dashboard";
     }
+    setView(resolved);
+    window.history.pushState(null, "", appPath(VIEW_PATHS[resolved]));
     setMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -1627,6 +1762,7 @@ export default function ChemBridgeApp({
     window.history.replaceState(null, "", appPath("/login"));
   }
   const initials = actor?.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "CB";
+  const sidebarProfileLabel = actor?.role === "admin" ? "Бас әкімші" : actor?.role === "content_admin" ? "Контент әкімшісі" : actor?.role === "teacher" ? "Мұғалім" : actor?.level ?? "Оқу профилі";
 
   if (!sessionChecked && inApp && !["periodic", "reactions", "laboratory"].includes(view)) return <main className={dark ? "theme-dark" : ""}><div className="route-loading" role="status">Аккаунт тексерілуде…</div></main>;
 
@@ -1634,25 +1770,29 @@ export default function ChemBridgeApp({
 
   return (
     <main className={dark ? "theme-dark" : ""}>
+      <a className="skip-link" href="#page-content">Негізгі мазмұнға өту</a>
       {inApp && <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
-        <div className="sidebar-top"><Brand /><button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="Мәзірді жабу"><X /></button></div>
+        <div className="sidebar-top"><Brand onClick={() => go("home")} /><button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="Мәзірді жабу"><X /></button></div>
         <nav aria-label="Негізгі навигация">
           <button className="home-link" onClick={() => go("home")}><Home /> Басты бет</button>
-          <span>Оқу</span>
-          {navItems.map(([id, label, Icon]) => <button className={view === id || (id === "world" && view === "lesson") ? "active" : ""} onClick={() => go(id)} key={id}><Icon />{navLabel(id, label)}{id === "world" && <small>{completedLessonIds.length}</small>}</button>)}
+          {sidebarGroups.map((group) => <div className="sidebar-nav-group" key={group.label}><span>{group.label}</span>{group.items.map(([id, label, Icon]) => {
+            const active = view === id || (id === "world" && view === "lesson");
+            return <button className={active ? "active" : ""} aria-current={active ? "page" : undefined} onClick={() => go(id)} key={id}><Icon />{navLabel(id, label)}{id === "world" && <small>{completedLessonIds.length}</small>}</button>;
+          })}</div>)}
           {actor && ["student", "school_student", "university_student"].includes(actor.role) && <button className={view === "feedback" ? "active" : ""} onClick={() => go("feedback")}><MessageSquare /> Кері байланыс</button>}
           <span>Басқару</span>
           {(actor?.role === "admin" || actor?.role === "content_admin") && <button className={view === "admin" ? "active" : ""} onClick={() => go("admin")}><ShieldCheck /> Әкімші панелі</button>}
         </nav>
-        <div className="sidebar-user"><button onClick={() => go("profile")}><span>{initials}</span><div><strong>{actor?.name ?? "ChemBridge оқушысы"}</strong><small>{actor?.level ?? "Оқу профилі"} · {actor?.xp ?? 0} XP</small></div><ChevronRight /></button><button className="logout-link" onClick={() => void logout()}><LogOut /> Жүйеден шығу</button></div>
+        <div className="sidebar-user"><button onClick={() => go("profile")}><span>{initials}</span><div><strong>{actor?.name ?? "ChemBridge оқушысы"}</strong><small>{sidebarProfileLabel} · {actor?.xp ?? 0} XP</small></div><ChevronRight /></button><button className="logout-link" onClick={() => void logout()}><LogOut /> Жүйеден шығу</button></div>
       </aside>}
       <div className={inApp ? "app-main" : ""}>
         <header className={inApp ? "app-header" : "public-header"}>
-          {inApp ? <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Мәзірді ашу"><Menu /></button> : <Brand />}
-          {!inApp && <nav><button onClick={() => go("home")}>Мүмкіндіктер</button><button onClick={() => go("world")}>Сабақтар</button><button onClick={() => go("periodic")}>Периодтық кесте</button><button onClick={() => go("laboratory")}>Зертхана</button></nav>}
+          {inApp ? <><button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Мәзірді ашу"><Menu /></button><div className="app-current-title"><span>ChemBridge</span><strong>{viewTitles[view] ?? "Оқу кеңістігі"}</strong></div></> : <Brand onClick={() => go("home")} />}
+          {!inApp && <nav className={menuOpen ? "open" : ""} aria-label="Қоғамдық навигация"><button onClick={() => { document.querySelector(".feature-grid")?.scrollIntoView({ behavior: "smooth", block: "start" }); setMenuOpen(false); }}>Мүмкіндіктер</button><button onClick={() => go("world")}>Сабақтар</button><button onClick={() => go("periodic")}>Периодтық кесте</button><button onClick={() => go("laboratory")}>Зертхана</button></nav>}
+          {!inApp && <button className="public-menu-button" onClick={() => setMenuOpen((value) => !value)} aria-expanded={menuOpen} aria-label={menuOpen ? "Навигацияны жабу" : "Навигацияны ашу"}>{menuOpen ? <X /> : <Menu />}</button>}
           <div className="header-actions"><button className="icon-button" onClick={() => setDark(!dark)} aria-label={dark ? "Ашық тақырып" : "Қараңғы тақырып"}>{dark ? <Sun /> : <Moon />}</button><button className="icon-button language" aria-label="Тілді таңдау"><Languages /><span>ҚАЗ</span></button>{!inApp && <button className="login-button" onClick={() => go(signedIn ? "dashboard" : "auth")}><LogIn /> {signedIn ? "Кабинет" : "Кіру"}</button>}{inApp && <button className="header-avatar" onClick={() => go("profile")} aria-label="Профиль">{initials}</button>}</div>
         </header>
-        <AnimatePresence mode="wait"><motion.div key={view} initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.2 }}>
+        <AnimatePresence mode="wait"><motion.div id="page-content" key={view} initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.2 }}>
           {view === "home" && <HomeView cms={publicCms} onStart={() => go(signedIn ? "dashboard" : "auth")} onPeriodic={() => go("periodic")} />}
           {view === "dashboard" && <DashboardView go={go} actor={actor} openLesson={openLesson} lessons={learningLessons} completedIds={completedIds} />}
           {view === "world" && <WorldView actor={actor} openLesson={openLesson} lessons={learningLessons} completedIds={completedIds} />}
@@ -1669,9 +1809,9 @@ export default function ChemBridgeApp({
           {view === "profile" && <ProfileView actor={actor} lessons={learningLessons} />}
           {view === "admin" && actor && (actor.role === "admin" || actor.role === "content_admin") && <AdminView actor={actor} onContentChanged={refreshPublicContent} />}
         </motion.div></AnimatePresence>
-        {!inApp && <footer><Brand /><p>Химияны зертте. Тәжірибе жаса. Білімді байланыстыр.</p><div><button onClick={() => go("admin")}>Әкімшілік</button><button onClick={() => go("auth")}>Кіру</button></div><small>© 2026 ChemBridge. Қауіпсіз ғылыми білім.</small></footer>}
+        {!inApp && <footer><Brand onClick={() => go("home")} /><p>Химияны зертте. Тәжірибе жаса. Білімді байланыстыр.</p><div><button onClick={() => go("admin")}>Әкімшілік</button><button onClick={() => go("auth")}>Кіру</button></div><small>© 2026 ChemBridge. Қауіпсіз ғылыми білім.</small></footer>}
       </div>
-      {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-label="Мәзірді жабу" />}
+      {inApp && menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-label="Мәзірді жабу" />}
     </main>
   );
 }
