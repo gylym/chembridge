@@ -11,7 +11,9 @@ export async function enforceMutationSecurity(
   const origin = request.headers.get("origin");
   if (origin) {
     const expectedOrigin = new URL(request.url).origin;
-    if (origin !== expectedOrigin) {
+    const normalizedOrigin = origin.trim().replace(/\/$/, "");
+    const allowedCrossOrigin = normalizedOrigin === "https://gylym.github.io";
+    if (normalizedOrigin !== expectedOrigin && !allowedCrossOrigin) {
       throw new ApiError(403, "CSRF_REJECTED", "Сұрау шыққан мекенжай расталмады");
     }
   }
