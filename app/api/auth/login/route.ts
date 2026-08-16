@@ -47,8 +47,13 @@ export async function POST(request: NextRequest) {
       level: user.level,
       xp: user.xp,
     };
-    const response = apiSuccess({ user: safeUser });
-    setSessionCookie(response, session, new URL(request.url).protocol === "https:");
+    const response = apiSuccess({ user: safeUser, token: session.token });
+    setSessionCookie(
+      response,
+      session,
+      new URL(request.url).protocol === "https:",
+      request.headers.get("origin")?.trim().replace(/\/$/, "") === "https://gylym.github.io",
+    );
     return response;
   } catch (error) {
     return apiFailure(error);
