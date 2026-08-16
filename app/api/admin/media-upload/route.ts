@@ -22,7 +22,7 @@ const requiredExtensions: Record<string, string[]> = {
 export async function POST(request: NextRequest) {
   try {
     await enforceMutationSecurity(request, "media-upload", 20);
-    const actor = await requirePermission(request, "edit_content");
+    const actor = await requirePermission(request, "publish_content");
     const requestType = request.headers.get("content-type") ?? "";
     let fileName = "";
     let contentType = "";

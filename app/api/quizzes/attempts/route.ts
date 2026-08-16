@@ -27,11 +27,23 @@ export async function POST(request: NextRequest) {
     const db = getD1();
     const storedQuestions = await db
       .prepare(
-        `SELECT id, correct_answer AS correctAnswer, explanation
-         FROM questions WHERE quiz_id = ? AND deleted_at IS NULL ORDER BY position`,
+        `SELECT q.id, q.correct_answer AS correctAnswer, q.explanation,
+                qz.pass_score AS passScore
+         FROM questions q
+         JOIN quizzes qz ON qz.id = q.quiz_id
+         LEFT JOIN lessons l ON l.id = qz.lesson_id
+         LEFT JOIN modules m ON m.id = l.module_id
+         LEFT JOIN courses c ON c.id = m.course_id
+         WHERE q.quiz_id = ? AND q.deleted_at IS NULL AND qz.deleted_at IS NULL
+           AND qz.status = 'published'
+           AND (qz.lesson_id IS NULL OR (
+             l.status = 'published' AND l.deleted_at IS NULL
+             AND m.deleted_at IS NULL AND c.status = 'published' AND c.deleted_at IS NULL
+           ))
+         ORDER BY q.position`,
       )
       .bind(parsed.data.quizId)
-      .all<{ id: string; correctAnswer: string; explanation: string }>();
+      .all<{ id: string; correctAnswer: string; explanation: string; passScore: number }>();
     const staticLesson = curriculumLessons.find((lesson) => `quiz:${lesson.id.replace("lesson:", "")}` === parsed.data.quizId);
     const usesStaticQuestions = !storedQuestions.results.length && !!staticLesson;
     const questions = storedQuestions.results.length
@@ -51,7 +63,8 @@ export async function POST(request: NextRequest) {
       explanation: question.explanation,
       isCorrect: (answerMap.get(question.id) ?? "").toLowerCase() === question.correctAnswer.toLowerCase(),
     }));
-    const result = gradeQuiz(checked.filter((item) => item.isCorrect).length, checked.length);
+    const passScore = storedQuestions.results[0]?.passScore ?? 70;
+    const result = gradeQuiz(checked.filter((item) => item.isCorrect).length, checked.length, passScore);
     const attemptId = crypto.randomUUID();
 
     await db
@@ -87,7 +100,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return apiSuccess({ attemptId, ...result, xp: awardedXp, answers: checked });
+    return apiSuccess({ attemptId, ...result, passScore, xp: awardedXp, answers: checked });
   } catch (error) {
     return apiFailure(error);
   }

@@ -7,6 +7,14 @@ export type Permission =
   | "manage_site"
   | "manage_users";
 
+const siteManagementEntities = new Set([
+  "settings",
+  "pages",
+  "pageSections",
+  "texts",
+  "navigation",
+]);
+
 const permissions: Record<Role, readonly Permission[]> = {
   student: ["learn"],
   school_student: ["learn"],
@@ -22,4 +30,12 @@ export function canAccess(role: Role, allowed: Role[]) {
 
 export function hasPermission(role: Role, permission: Permission) {
   return permissions[role].includes(permission);
+}
+
+/**
+ * The generic CMS is an administrative surface, not the teacher workspace.
+ * Teachers manage only their own lessons through the scoped teacher routes.
+ */
+export function cmsPermissionForEntity(entity: string): Permission {
+  return siteManagementEntities.has(entity) ? "manage_site" : "publish_content";
 }

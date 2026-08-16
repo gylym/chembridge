@@ -141,6 +141,7 @@ export const gradeLevels = ["7-сынып", "8-сынып", "9-сынып", "10-
 export type GradeLevel = typeof gradeLevels[number];
 
 export type LessonQuizQuestion = {
+  id?: string;
   question: string;
   options: string[];
   answer: number;
@@ -160,6 +161,8 @@ export type CurriculumLesson = {
   example: string;
   remember: string;
   attachments?: Array<{ id: string; blockType: string; title: string; url: string; mimeType: string; altText: string }>;
+  quizId?: string;
+  passScore?: number;
   quiz: LessonQuizQuestion[];
 };
 

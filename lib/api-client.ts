@@ -1,6 +1,18 @@
 export type ApiEnvelope<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string } };
+  | { ok: false; error: { code: string; message: string; fields?: Record<string, string | string[]> } };
+
+export class ApiClientError extends Error {
+  constructor(
+    message: string,
+    public code = "REQUEST_FAILED",
+    public status = 0,
+    public fields: Record<string, string | string[]> = {},
+  ) {
+    super(message);
+    this.name = "ApiClientError";
+  }
+}
 
 const REMOTE_API_ORIGIN = "https://chembridge-kz-learning.chatgpt-edu-3017.chatgpt.site";
 const TOKEN_KEY = "chembridge_api_token";
@@ -10,15 +22,21 @@ function usesRemoteApi() {
 }
 
 function readToken() {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY) ?? window.sessionStorage.getItem(TOKEN_KEY);
+  if (typeof window === "undefined" || !usesRemoteApi()) return null;
+  // Never keep a cross-origin bearer token in persistent storage. Remove the
+  // legacy value during migration and scope the token to the current tab.
+  window.localStorage.removeItem(TOKEN_KEY);
+  return window.sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function saveApiToken(token: string, persistent: boolean) {
+export function saveApiToken(token: string) {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(TOKEN_KEY);
   window.sessionStorage.removeItem(TOKEN_KEY);
-  (persistent ? window.localStorage : window.sessionStorage).setItem(TOKEN_KEY, token);
+  // The production Site uses a secure HttpOnly cookie. A browser-readable
+  // bearer token is needed only by the static GitHub Pages frontend.
+  if (!usesRemoteApi()) return;
+  window.sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearApiToken() {
@@ -64,11 +82,18 @@ async function readApiEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
     return JSON.parse(text) as ApiEnvelope<T>;
   } catch {
     const detail = text.trim();
-    throw new Error(
-      detail
-        ? `Сервер сұрауды қабылдамады (${response.status}): ${detail}`
-        : `Сервер сұрауды қабылдамады (${response.status})`,
-    );
+    const message = response.status === 401
+      ? "Сессия аяқталды. Аккаунтқа қайта кіріңіз."
+      : response.status === 403
+        ? "Бұл әрекетке рұқсатыңыз жоқ. Аккаунт құқығын тексеріңіз."
+        : response.status === 413
+          ? "Файл көлемі рұқсат етілген шектен үлкен."
+          : response.status >= 500
+            ? "Серверде уақытша қате пайда болды. Әрекетті қайталап көріңіз."
+            : detail && detail.length <= 180
+              ? `Сервер жауабы: ${detail}`
+              : `Сұрау орындалмады (${response.status}).`;
+    throw new ApiClientError(message, "INVALID_SERVER_RESPONSE", response.status);
   }
 }
 
@@ -90,38 +115,38 @@ function inferredContentType(file: File) {
   } as Record<string, string>)[extension ?? ""] ?? "application/octet-stream";
 }
 
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-  }
-  return btoa(binary);
-}
-
 export async function uploadMediaFile(
   file: File,
   metadata: { title: string; altText: string; folder: string },
 ) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (file.size === 0) throw new ApiClientError("Файл бос немесе оқылмайды.", "EMPTY_FILE");
+  if (file.size > 15 * 1024 * 1024) throw new ApiClientError("Файл көлемі 15 МБ-тан аспауы керек.", "MEDIA_TOO_LARGE", 413);
+  const normalizedFile = file.type ? file : new File([file], file.name, { type: inferredContentType(file) });
+  const body = new FormData();
+  body.set("file", normalizedFile);
+  body.set("title", metadata.title);
+  body.set("altText", metadata.altText);
+  body.set("folder", metadata.folder);
   return apiRequest<{ id: string; url: string }>("/api/admin/media-upload", {
     method: "POST",
-    body: JSON.stringify({
-      ...metadata,
-      fileName: file.name,
-      contentType: inferredContentType(file),
-      base64: bytesToBase64(bytes),
-    }),
+    body,
   });
 }
 
 export async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!(init?.body instanceof FormData)) headers.set("content-type", "application/json");
-  const response = await apiFetch(url, { ...init, headers });
+  let response: Response;
+  try {
+    response = await apiFetch(url, { ...init, headers });
+  } catch (error) {
+    if (error instanceof ApiClientError) throw error;
+    throw new ApiClientError("Сервермен байланысу мүмкін болмады. Интернет байланысын тексеріп, қайталап көріңіз.", "NETWORK_ERROR");
+  }
   const payload = await readApiEnvelope<T>(response);
   if (!response.ok || !payload.ok) {
-    throw new Error(payload.ok ? "Сұрау орындалмады" : payload.error.message);
+    if (payload.ok) throw new ApiClientError("Сұрау орындалмады", "REQUEST_FAILED", response.status);
+    throw new ApiClientError(payload.error.message, payload.error.code, response.status, payload.error.fields ?? {});
   }
   return absolutizeApiUrls(payload.data) as T;
 }

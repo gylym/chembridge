@@ -5,11 +5,12 @@ import { requireRole } from "../../../../../server/auth";
 import { getD1 } from "../../../../../server/database";
 import { apiFailure, apiSuccess, ApiError } from "../../../../../server/http";
 import { enforceMutationSecurity } from "../../../../../server/security";
+import { requireLessonEditAccess } from "../../../../../server/lesson-access";
 
 const updateInput = z.object({
   title: z.string().trim().min(3).max(160).optional(),
   objective: z.string().trim().min(10).max(1000).optional(),
-  status: z.enum(["draft", "published"]).optional(),
+  status: z.enum(["draft", "in_review", "published"]).optional(),
 }).refine((value) => Object.keys(value).length > 0);
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -17,12 +18,16 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     await enforceMutationSecurity(request, "teacher-lesson-update", 30);
     const actor = await requireRole(request, ["teacher", "admin"]);
     const { id } = await context.params;
+    await requireLessonEditAccess(actor, id);
     const parsed = updateInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Өзгерістер дұрыс емес");
     const db = getD1();
     const current = await db.prepare("SELECT title, objective, status FROM lessons WHERE id = ? AND deleted_at IS NULL")
       .bind(id).first<{ title: string; objective: string; status: string }>();
     if (!current) throw new ApiError(404, "NOT_FOUND", "Сабақ табылмады");
+    if (actor.role === "teacher" && (current.status === "published" || parsed.data.status === "published")) {
+      throw new ApiError(403, "PUBLISH_FORBIDDEN", "Мұғалім жарияланған сабақты тікелей өзгерте алмайды");
+    }
     const next = { ...current, ...parsed.data };
     await db.prepare(
       "UPDATE lessons SET title = ?, objective = ?, status = ?, updated_at = unixepoch() WHERE id = ?",
@@ -39,7 +44,14 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     await enforceMutationSecurity(request, "teacher-lesson-delete", 10);
     const actor = await requireRole(request, ["teacher", "admin"]);
     const { id } = await context.params;
+    await requireLessonEditAccess(actor, id);
     const db = getD1();
+    if (actor.role === "teacher") {
+      const current = await db.prepare("SELECT status FROM lessons WHERE id = ? AND deleted_at IS NULL").bind(id).first<{ status: string }>();
+      if (current?.status === "published") {
+        throw new ApiError(403, "PUBLISH_FORBIDDEN", "Жарияланған сабақты әкімші ғана өшіре алады");
+      }
+    }
     const result = await db.prepare(
       "UPDATE lessons SET deleted_at = unixepoch(), updated_at = unixepoch() WHERE id = ? AND deleted_at IS NULL",
     ).bind(id).run();

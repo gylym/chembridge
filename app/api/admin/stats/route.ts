@@ -5,7 +5,7 @@ import { apiFailure, apiSuccess } from "../../../../server/http";
 
 export async function GET(request: NextRequest) {
   try {
-    await requirePermission(request, "manage_site");
+    await requirePermission(request, "publish_content");
     const db = getD1();
     const row = await db.prepare(
       `SELECT

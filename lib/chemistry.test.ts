@@ -37,4 +37,9 @@ describe("quiz grading", () => {
   it("grades and awards proportional XP", () => {
     expect(gradeQuiz(4, 5)).toEqual({ score: 80, passed: true, xp: 64 });
   });
+
+  it("honors the quiz pass score configured by the publisher", () => {
+    expect(gradeQuiz(4, 5, 90).passed).toBe(false);
+    expect(gradeQuiz(4, 5, 75).passed).toBe(true);
+  });
 });

@@ -127,8 +127,10 @@ export async function PATCH(request: NextRequest) {
     if (parsed.data.revokeSessions || parsed.data.temporaryPassword || parsed.data.status && parsed.data.status !== "active") {
       await db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").bind(parsed.data.userId).run();
     }
-    await writeAudit(actor, "USER_UPDATE", "user", parsed.data.userId, parsed.data);
-    return apiSuccess(parsed.data);
+    const safeAuditData = { ...parsed.data };
+    delete safeAuditData.temporaryPassword;
+    await writeAudit(actor, "USER_UPDATE", "user", parsed.data.userId, safeAuditData);
+    return apiSuccess(safeAuditData);
   } catch (error) {
     return apiFailure(error);
   }

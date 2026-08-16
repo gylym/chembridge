@@ -13,17 +13,22 @@ const lessonInput = z.object({
 });
 
 async function ensureDefaultModule(db: D1Database, actorId: string) {
-  const existingModule = await db.prepare("SELECT id FROM modules WHERE deleted_at IS NULL ORDER BY position LIMIT 1")
+  const ownerKey = actorId.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+  const courseId = `course:teacher:${actorId}`;
+  const moduleId = `module:teacher:${actorId}`;
+  const existingModule = await db.prepare(
+    `SELECT m.id FROM modules m JOIN courses c ON c.id = m.course_id
+     WHERE c.author_id = ? AND c.id = ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL
+     ORDER BY m.position LIMIT 1`,
+  ).bind(actorId, courseId)
     .first<{ id: string }>();
   if (existingModule) return existingModule.id;
-  const courseId = "course:general-chemistry";
-  const moduleId = "module:teacher-content";
   await db.batch([
     db.prepare(
       `INSERT OR IGNORE INTO courses
        (id, slug, title, description, status, author_id, created_at, updated_at)
-       VALUES (?, 'general-chemistry', 'Жалпы химия', 'Мұғалім құрастырған курс', 'published', ?, unixepoch(), unixepoch())`,
-    ).bind(courseId, actorId),
+       VALUES (?, ?, 'Мұғалім сабақтары', 'Мұғалім құрастырған курс', 'draft', ?, unixepoch(), unixepoch())`,
+    ).bind(courseId, `teacher-${ownerKey}`, actorId),
     db.prepare(
       `INSERT OR IGNORE INTO modules
        (id, course_id, title, position, created_at, updated_at)
@@ -35,13 +40,24 @@ async function ensureDefaultModule(db: D1Database, actorId: string) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole(request, ["teacher", "admin"]);
+    const actor = await requireRole(request, ["teacher", "admin"]);
     const db = getD1();
+    const teacherCourseId = `course:teacher:${actor.id}`;
     const rows = await db.prepare(
       `SELECT l.id, l.title, l.objective, l.status, l.position, m.title AS moduleTitle
-       FROM lessons l JOIN modules m ON m.id = l.module_id
-       WHERE l.deleted_at IS NULL ORDER BY l.updated_at DESC`,
-    ).all();
+       FROM lessons l JOIN modules m ON m.id = l.module_id JOIN courses c ON c.id = m.course_id
+       WHERE l.deleted_at IS NULL AND (
+         ? = 'admin'
+         OR (c.author_id = ? AND c.id = ?)
+         OR EXISTS (
+           SELECT 1 FROM audit_logs a
+           WHERE a.actor_id = ? AND a.entity_id = l.id
+             AND a.entity_type IN ('lesson', 'lessons')
+             AND a.action IN ('CREATE', 'CONTENT_CREATE')
+         )
+       )
+       ORDER BY l.updated_at DESC`,
+    ).bind(actor.role, actor.id, teacherCourseId, actor.id).all();
     return apiSuccess(rows.results);
   } catch (error) {
     return apiFailure(error);
@@ -67,7 +83,7 @@ export async function POST(request: NextRequest) {
        VALUES (?, ?, ?, ?, ?, ?, ?, 50, unixepoch(), unixepoch())`,
     ).bind(id, moduleId, slug, parsed.data.title, parsed.data.objective, safeStatus, positionRow?.position ?? 1).run();
     await writeAudit(actor, "CREATE", "lesson", id, parsed.data);
-    return apiSuccess({ id, ...parsed.data }, 201);
+    return apiSuccess({ id, ...parsed.data, status: safeStatus }, 201);
   } catch (error) {
     return apiFailure(error);
   }

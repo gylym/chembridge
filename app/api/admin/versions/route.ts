@@ -5,6 +5,7 @@ import { requirePermission } from "../../../../server/auth";
 import { getD1 } from "../../../../server/database";
 import { apiFailure, apiSuccess, ApiError } from "../../../../server/http";
 import { enforceMutationSecurity } from "../../../../server/security";
+import { cmsPermissionForEntity } from "../../../../server/permissions";
 
 const tables = {
   courses: "courses",
@@ -39,11 +40,11 @@ function tableFor(entity: string) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requirePermission(request, "edit_content");
     const url = new URL(request.url);
     const entity = url.searchParams.get("entity") ?? "";
     const entityId = url.searchParams.get("id") ?? "";
     tableFor(entity);
+    await requirePermission(request, cmsPermissionForEntity(entity));
     if (!entityId) throw new ApiError(400, "VALIDATION_ERROR", "Контент ID қажет");
     const rows = await getD1().prepare(
       `SELECT v.id, v.version, v.change_note AS changeNote, v.created_at AS createdAt,
@@ -63,10 +64,10 @@ const restoreInput = z.object({ versionId: z.string().min(1), entity: z.string()
 export async function POST(request: NextRequest) {
   try {
     await enforceMutationSecurity(request, "cms-version-restore", 20);
-    const actor = await requirePermission(request, "publish_content");
     const parsed = restoreInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Нұсқа деректері дұрыс емес");
     const table = tableFor(parsed.data.entity);
+    const actor = await requirePermission(request, cmsPermissionForEntity(parsed.data.entity));
     const db = getD1();
     const version = await db.prepare(
       `SELECT snapshot FROM content_versions

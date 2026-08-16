@@ -7,6 +7,7 @@ import { getD1 } from "../../../../../server/database";
 import { apiFailure, apiSuccess, ApiError } from "../../../../../server/http";
 import { enforceMutationSecurity } from "../../../../../server/security";
 import { assertSafePdfUrl, assertSafeResourceUrl, extractYouTubeVideoId } from "../../../../../server/media-validation";
+import { cmsPermissionForEntity } from "../../../../../server/permissions";
 
 const entityConfig = {
   courses: {
@@ -172,6 +173,10 @@ function getConfig(entity: string) {
   return entityConfig[entity as Entity];
 }
 
+async function requireCmsActor(request: NextRequest, entity: string) {
+  return requirePermission(request, cmsPermissionForEntity(entity));
+}
+
 function cleanValue(value: string | number) {
   if (typeof value === "number") return value;
   return sanitizeCmsText(value);
@@ -300,8 +305,10 @@ function buildCreation(entity: Entity, values: Record<string, string | number>, 
       return { id, columns: ["menu", "label", "href", "icon", "position", "is_visible", "required_role", "parent_id", "updated_by"], values: [data.menu, data.label, data.href, data.icon || null, data.position, data.isVisible, data.requiredRole || null, data.parentId || null, actorId] };
     }
     case "media": {
-      const data = z.object({ title: shortText, url: z.string().url().max(2_000), mimeType: z.string().trim().min(3).max(100), altText: shortText, caption: z.string().trim().max(500).optional(), folder: z.string().trim().min(1).max(100) }).parse(values);
-      if (!/^https:\/\//i.test(data.url)) throw new ApiError(400, "UNSAFE_URL", "Media URL HTTPS болуы керек");
+      const data = z.object({ title: shortText, url: z.string().trim().min(1).max(2_000), mimeType: z.string().trim().min(3).max(100), altText: shortText, caption: z.string().trim().max(500).optional(), folder: z.string().trim().min(1).max(100) }).parse(values);
+      if (!/^https:\/\//i.test(data.url) && !/^\/api\/media\/[A-Za-z0-9%_.\/-]+$/.test(data.url)) {
+        throw new ApiError(400, "UNSAFE_URL", "Media URL HTTPS немесе жүктелген файл сілтемесі болуы керек");
+      }
       return { id, columns: ["title", "url", "mime_type", "alt_text", "caption", "folder", "uploaded_by"], values: [data.title, data.url, data.mimeType, data.altText, cleanValue(data.caption ?? ""), data.folder, actorId] };
     }
   }
@@ -323,9 +330,9 @@ export async function GET(
   { params }: { params: Promise<{ entity: string }> },
 ) {
   try {
-    await requirePermission(request, "edit_content");
     const { entity } = await params;
     const config = getConfig(entity);
+    await requireCmsActor(request, entity);
     const url = new URL(request.url);
     const search = (url.searchParams.get("search") ?? "").slice(0, 100);
     const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
@@ -353,9 +360,9 @@ export async function POST(
 ) {
   try {
     await enforceMutationSecurity(request, "admin-content-create", 40);
-    const actor = await requirePermission(request, "edit_content");
     const { entity: rawEntity } = await params;
     getConfig(rawEntity);
+    const actor = await requireCmsActor(request, rawEntity);
     const entity = rawEntity as Entity;
     const parsed = createInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Жаңа контент деректері дұрыс емес");
@@ -401,9 +408,9 @@ export async function PATCH(
 ) {
   try {
     await enforceMutationSecurity(request, "admin-content-update", 60);
-    const actor = await requirePermission(request, "edit_content");
     const { entity } = await params;
     const config = getConfig(entity);
+    const actor = await requireCmsActor(request, entity);
     const parsed = contentInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Контент деректері дұрыс емес");
 
@@ -430,6 +437,19 @@ export async function PATCH(
     if (["presentations", "assignments"].includes(entity) && typeof normalizedValues.fileUrl === "string") {
       normalizedValues.fileUrl = assertSafeResourceUrl(normalizedValues.fileUrl);
     }
+    const mergedValues = Object.fromEntries(
+      Object.entries({ ...before, ...normalizedValues })
+        .filter(([key, value]) => !["id", "createdAt", "updatedAt", "publishedAt"].includes(key) && value !== null && value !== undefined)
+        .map(([key, value]) => [
+          key,
+          ["details", "payload", "value"].includes(key) && typeof value === "object"
+            ? JSON.stringify(value)
+            : value,
+        ]),
+    ) as Record<string, string | number>;
+    // Reuse the complete entity schema so PATCH cannot bypass the stricter
+    // create-time field, URL and relationship validation.
+    buildCreation(entity as Entity, mergedValues, actor.id);
     const assignments: string[] = [];
     const values: Array<string | number> = [];
     for (const [key, rawValue] of Object.entries(normalizedValues)) {
@@ -448,7 +468,9 @@ export async function PATCH(
     if (normalizedValues.status === "published" && actor.role === "teacher") {
       throw new ApiError(403, "PUBLISH_FORBIDDEN", "Мұғалім контентті тек тексеруге жібере алады");
     }
-    if (normalizedValues.status === "published") assertPublishable(entity, { ...before, ...normalizedValues });
+    if ((normalizedValues.status ?? before.status) === "published") {
+      assertPublishable(entity, { ...before, ...normalizedValues });
+    }
     await createContentVersion(db, actor, entity, parsed.data.id, before);
     const result = await db.prepare(
       `UPDATE ${config.table} SET ${assignments.join(", ")} WHERE id = ? AND deleted_at IS NULL`,
@@ -457,6 +479,14 @@ export async function PATCH(
     await writeAudit(actor, "CONTENT_UPDATE", entity, parsed.data.id, parsed.data.values);
     return apiSuccess({ id: parsed.data.id, values: parsed.data.values });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return apiFailure(new ApiError(
+        400,
+        "VALIDATION_ERROR",
+        "Контент өрістерін дұрыс толтырыңыз",
+        z.flattenError(error).fieldErrors,
+      ));
+    }
     return apiFailure(error);
   }
 }
@@ -472,9 +502,9 @@ export async function DELETE(
 ) {
   try {
     await enforceMutationSecurity(request, "admin-content-delete", 40);
-    const actor = await requirePermission(request, "edit_content");
     const { entity } = await params;
     const config = getConfig(entity);
+    const actor = await requireCmsActor(request, entity);
     const parsed = deleteInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Контент идентификаторы дұрыс емес");
     const db = getD1();

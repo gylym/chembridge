@@ -128,12 +128,12 @@ export function levelFromXp(xp: number) {
   return Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1);
 }
 
-export function gradeQuiz(correct: number, total: number) {
+export function gradeQuiz(correct: number, total: number, passScore = 70) {
   if (total <= 0) return { score: 0, passed: false, xp: 0 };
   const score = Math.round((correct / total) * 100);
   return {
     score,
-    passed: score >= 70,
+    passed: score >= Math.max(0, Math.min(passScore, 100)),
     xp: calculateServerXp("QUIZ", score),
   };
 }

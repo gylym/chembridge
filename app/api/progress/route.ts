@@ -6,6 +6,7 @@ import { requireActor } from "../../../server/auth";
 import { getD1 } from "../../../server/database";
 import { apiFailure, apiSuccess, ApiError } from "../../../server/http";
 import { enforceMutationSecurity } from "../../../server/security";
+import { validateLessonCompletion, type StoredLessonQuestion } from "../../../server/quiz-validation";
 
 const progressInput = z.object({
   lessonId: z.string().min(1).max(100),
@@ -48,10 +49,33 @@ export async function POST(request: NextRequest) {
     if (completed) {
       const lesson = curriculumLessons.find((item) => item.id === lessonId);
       const answers = parsed.data.answers ?? [];
-      const dbLesson = !lesson ? await db.prepare("SELECT id FROM lessons WHERE id = ? AND status = 'published' AND deleted_at IS NULL").bind(lessonId).first() : null;
-      const staticInvalid = lesson && (lesson.quiz.length < 3 || answers.length !== lesson.quiz.length || lesson.quiz.some((question, index) => answers[index] !== question.answer));
-      const databaseInvalid = !lesson && (!dbLesson || answers.length !== 3 || answers.some((answer) => answer !== 0));
-      if (staticInvalid || databaseInvalid) {
+      const selectedQuiz = await db.prepare(
+        `SELECT qz.id
+         FROM quizzes qz
+         JOIN lessons l ON l.id = qz.lesson_id
+         JOIN modules m ON m.id = l.module_id
+         JOIN courses c ON c.id = m.course_id
+         WHERE qz.lesson_id = ? AND qz.status = 'published' AND qz.deleted_at IS NULL
+           AND l.status = 'published' AND l.deleted_at IS NULL
+           AND m.deleted_at IS NULL AND c.status = 'published' AND c.deleted_at IS NULL
+         ORDER BY qz.updated_at DESC, qz.id DESC LIMIT 1`,
+      ).bind(lessonId).first<{ id: string }>();
+      let storedQuestions: StoredLessonQuestion[] | null = null;
+      if (selectedQuiz) {
+        const rows = await db.prepare(
+          `SELECT q.correct_answer AS correctAnswer, q.options
+           FROM questions q
+           WHERE q.quiz_id = ? AND q.deleted_at IS NULL
+           ORDER BY q.position`,
+        ).bind(selectedQuiz.id).all<StoredLessonQuestion>();
+        storedQuestions = rows.results;
+      }
+      const validAnswers = validateLessonCompletion(
+        storedQuestions,
+        lesson?.quiz.map((question) => question.answer) ?? null,
+        answers,
+      );
+      if (!validAnswers) {
         throw new ApiError(400, "LESSON_CHECK_REQUIRED", "Сабақты аяқтау үшін 3 сұраққа дұрыс жауап беріңіз");
       }
     }

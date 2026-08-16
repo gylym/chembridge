@@ -1,5 +1,6 @@
 import { getD1 } from "./database";
 import type { Actor } from "./auth";
+import { redactAuditPayload } from "./audit-redaction";
 
 export async function writeAudit(
   actor: Actor,
@@ -21,7 +22,7 @@ export async function writeAudit(
       action,
       entityType,
       entityId,
-      payload === null ? null : JSON.stringify(payload),
+      payload === null ? null : JSON.stringify(redactAuditPayload(payload)),
     )
     .run();
 }
