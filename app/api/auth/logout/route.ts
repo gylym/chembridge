@@ -8,7 +8,11 @@ export async function POST(request: NextRequest) {
     await enforceMutationSecurity(request, "auth-logout", 20);
     await deleteRequestSession(request);
     const response = apiSuccess({ signedOut: true });
-    clearSessionCookie(response, new URL(request.url).protocol === "https:");
+    clearSessionCookie(
+      response,
+      new URL(request.url).protocol === "https:",
+      request.headers.get("origin")?.trim().replace(/\/$/, "") === "https://gylym.github.io",
+    );
     return response;
   } catch (error) {
     return apiFailure(error);
