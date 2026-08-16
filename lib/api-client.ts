@@ -67,7 +67,10 @@ function absolutizeApiUrls(value: unknown): unknown {
 export async function apiFetch(url: string, init?: RequestInit) {
   const headers = new Headers(init?.headers);
   const token = readToken();
-  if (token) headers.set("authorization", `Bearer ${token}`);
+  const isAuthEntryPoint = url === "/api/auth/login" || url === "/api/auth/register";
+  // A stale session must never turn a cross-origin login into an authenticated
+  // preflight. Login and registration establish a fresh session themselves.
+  if (token && !isAuthEntryPoint) headers.set("authorization", `Bearer ${token}`);
   return fetch(apiUrl(url), {
     cache: "no-store",
     ...init,
@@ -135,7 +138,16 @@ export async function uploadMediaFile(
 
 export async function apiRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (!(init?.body instanceof FormData)) headers.set("content-type", "application/json");
+  if (!(init?.body instanceof FormData) && init?.body !== undefined) {
+    const isRemoteAuthEntryPoint = usesRemoteApi()
+      && (url === "/api/auth/login" || url === "/api/auth/register");
+    // text/plain is CORS-safelisted, while the body remains valid JSON and is
+    // still parsed with request.json() by the API. This keeps authentication
+    // working even when an edge strips headers from an OPTIONS response.
+    headers.set("content-type", isRemoteAuthEntryPoint
+      ? "text/plain;charset=UTF-8"
+      : "application/json");
+  }
   let response: Response;
   try {
     response = await apiFetch(url, { ...init, headers });
