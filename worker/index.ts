@@ -28,6 +28,24 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const origin = request.headers.get("origin");
+    const isGithubPages = origin === "https://gylym.github.io";
+
+    if (url.pathname.startsWith("/api/") && request.method === "OPTIONS" && isGithubPages) {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Credentials": "true",
+          "Access-Control-Allow-Methods": "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization,Content-Type,Accept,Cache-Control,Pragma",
+          "Access-Control-Expose-Headers": "Content-Disposition",
+          "Access-Control-Max-Age": "86400",
+          "Cross-Origin-Resource-Policy": "cross-origin",
+          Vary: "Origin",
+        },
+      });
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
@@ -40,7 +58,15 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    if (!url.pathname.startsWith("/api/") || !isGithubPages) return response;
+    const corsResponse = new Response(response.body, response);
+    corsResponse.headers.set("Access-Control-Allow-Origin", origin);
+    corsResponse.headers.set("Access-Control-Allow-Credentials", "true");
+    corsResponse.headers.set("Access-Control-Expose-Headers", "Content-Disposition");
+    corsResponse.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+    corsResponse.headers.append("Vary", "Origin");
+    return corsResponse;
   },
 };
 
