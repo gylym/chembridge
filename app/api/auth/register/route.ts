@@ -54,8 +54,14 @@ export async function POST(request: NextRequest) {
     const session = await createSession(id, false);
     const response = apiSuccess({
       user: { id, username, name, role, status: "active", level, xp: 0 },
+      token: session.token,
     }, 201);
-    setSessionCookie(response, session, new URL(request.url).protocol === "https:");
+    setSessionCookie(
+      response,
+      session,
+      new URL(request.url).protocol === "https:",
+      request.headers.get("origin")?.trim().replace(/\/$/, "") === "https://gylym.github.io",
+    );
     return response;
   } catch (error) {
     return apiFailure(error);
