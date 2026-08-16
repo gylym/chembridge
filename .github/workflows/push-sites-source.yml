@@ -19,5 +19,7 @@ jobs:
         run: |
           test -n "$SITES_REPO_TOKEN"
           git remote add sites "https://git.chatgpt-team.site/5fa5c1f6-888d-4411-a957-edfbca3c82a1/appgprj_6a6b390500dc81a4965b84302aaaff05.git"
-          git -c http.extraHeader="Authorization: Bearer $SITES_REPO_TOKEN" push sites HEAD:main
+          git -c http.extraHeader="Authorization: Bearer $SITES_REPO_TOKEN" fetch sites main
+          remote_sha=$(git rev-parse FETCH_HEAD)
+          git -c http.extraHeader="Authorization: Bearer $SITES_REPO_TOKEN" push --force-with-lease=refs/heads/main:$remote_sha sites HEAD:main
           git rev-parse HEAD
