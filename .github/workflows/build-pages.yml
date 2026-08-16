@@ -1,0 +1,55 @@
+name: Build ChemBridge GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "lib/**"
+      - "messages/**"
+      - "github-pages/**"
+      - "server/**"
+      - "worker/**"
+      - "db/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "vite.github-pages.config.ts"
+      - "scripts/inline-github-pages.mjs"
+      - ".github/workflows/build-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chembridge-pages-build
+  cancel-in-progress: true
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build:github-pages
+      - name: Commit generated GitHub Pages files
+        run: |
+          if git diff --quiet -- docs; then
+            echo "Generated Pages output is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html docs/404.html
+          git commit -m "build: refresh GitHub Pages [skip ci]"
+          git push
