@@ -32,11 +32,23 @@ export async function createSession(userId: string, remember: boolean) {
   return { token, expiresAt, maxAge };
 }
 
-export function setSessionCookie(response: NextResponse, session: Awaited<ReturnType<typeof createSession>>, secure: boolean) {
+export function requestSessionToken(request: NextRequest) {
+  const authorization = request.headers.get("authorization");
+  if (authorization?.startsWith("Bearer ")) return authorization.slice(7).trim();
+  return request.cookies.get(SESSION_COOKIE)?.value;
+}
+
+export function setSessionCookie(
+  response: NextResponse,
+  session: Awaited<ReturnType<typeof createSession>>,
+  secure: boolean,
+  crossOrigin = false,
+) {
   response.cookies.set(SESSION_COOKIE, session.token, {
     httpOnly: true,
     secure,
-    sameSite: "lax",
+    sameSite: crossOrigin ? "none" : "lax",
+    partitioned: crossOrigin,
     path: "/",
     maxAge: session.maxAge,
     expires: session.expiresAt,
@@ -51,7 +63,7 @@ export function setSessionCookie(response: NextResponse, session: Awaited<Return
 }
 
 export async function deleteRequestSession(request: NextRequest) {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  const token = requestSessionToken(request);
   if (!token) return;
   const db = getD1();
   await db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?")
@@ -59,11 +71,12 @@ export async function deleteRequestSession(request: NextRequest) {
     .run();
 }
 
-export function clearSessionCookie(response: NextResponse, secure: boolean) {
+export function clearSessionCookie(response: NextResponse, secure: boolean, crossOrigin = false) {
   response.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
     secure,
-    sameSite: "lax",
+    sameSite: crossOrigin ? "none" : "lax",
+    partitioned: crossOrigin,
     path: "/",
     maxAge: 0,
   });
@@ -72,7 +85,8 @@ export function clearSessionCookie(response: NextResponse, secure: boolean) {
   response.cookies.set(SIGNED_OUT_COOKIE, "1", {
     httpOnly: true,
     secure,
-    sameSite: "lax",
+    sameSite: crossOrigin ? "none" : "lax",
+    partitioned: crossOrigin,
     path: "/",
     maxAge: 30 * DAY,
   });
